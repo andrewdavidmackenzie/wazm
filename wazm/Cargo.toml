@@ -1,0 +1,22 @@
+[package]
+name = "wazm"
+description = "Compressor/Decompressor for web assembly"
+version = "0.1.0"
+authors = ["Andrew Mackenzie <andrew@mackenzie-serres.net>"]
+license-file = "LICENSE"
+#documentation = "https://github.com/andrewdavidmackenzie/flow/README.md"
+#homepage = "http://andrewdavidmackenzie.github.io/flow/"
+repository = "https://github.com/andrewdavidmackenzie/wazm"
+readme = "README.md"
+edition = "2021"
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[lib]
+name = "wazm"
+path = "src/lib/lib.rs"
+
+[[bin]]
+name = "wazm"
+path = "src/bin/wazm.rs"
