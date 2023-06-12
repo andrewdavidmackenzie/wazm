@@ -20,3 +20,6 @@ path = "src/lib/lib.rs"
 [[bin]]
 name = "wazm"
 path = "src/bin/wazm.rs"
+
+[dev-dependencies]
+wax = "0.5.0"
