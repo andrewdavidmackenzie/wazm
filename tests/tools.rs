@@ -1,62 +1,41 @@
 use wax::Glob;
 use std::path::PathBuf;
+use std::process::Command;
+use std::fs;
 
 const TOOL_LIST : [(&str, &str); 2] = [("wazm", "wz"), ("gzip", "gz")];
 
 #[test]
 fn test() {
-//    export PATH := $(PWD)/wazm/target/debug:$(PWD)/wazm/target/release:$(PATH)
+    let test_files_dir = PathBuf::from("tests/test_files");
+    let test_output_dir = PathBuf::from("tests/test_output");
+    let _ = std::fs::remove_dir_all(&test_output_dir);
+    let _ = std::fs::create_dir(&test_output_dir);
 
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut test_files_dir = root.clone();
-    test_files_dir.push("tests");
-    test_files_dir.push("test_files");
-
-    let mut test_output_dir = root.clone();
-    test_output_dir.push("tests");
-    test_output_dir.push("test_output");
-    let _ = std::fs::create_dir(test_output_dir);
+    let path = std::env::var("PATH").unwrap();
+    let extended_path = &format!("target/debug:target/release:{}", path);
 
     let glob = Glob::new("**/*.wasm").expect("Globbing error");
     for entry in glob.walk(test_files_dir) {
         let entry = entry.unwrap();
         let path = entry.path();
-        println!("Testing file {}", path.display());
+
+        let original_size = path.metadata().unwrap().len();
+        println!("{} {}", path.file_name().unwrap().to_string_lossy(), original_size);
 
         for (tool, extension) in TOOL_LIST {
-            println!("Testing tool {tool} with extension {extension}");
+            let mut test_output_file = test_output_dir.clone();
+            test_output_file.push(path.file_name().unwrap());
+            fs::copy(path, &test_output_file).unwrap();
+            assert!(Command::new(tool)
+                        .env("PATH", extended_path)
+                        .arg(path)
+                        .status().unwrap()
+                        .success(), "Could not run tool");
+            let output = format!("{}.{}", path.display(), extension);
+            let output_path = PathBuf::from(output);
+            let new_size = output_path.metadata().unwrap().len();
+            println!("{tool} {new_size} {}%", (new_size * 100) / original_size);
         }
-        //output_file.set_extension("dot.svg");
-
-        /*
-        #[allow(clippy::needless_borrow)]
-        if Command::new(&dot)
-            .args(vec!["-Tsvg", &format!("-o{}", output_file.display()), &path_name])
-            .status()?.success() {
-            debug!(".dot.svg successfully generated from {path_name}");
-            if delete_dots {
-//                    std::fs::remove_file(path)?;
-                debug!("Source file {path_name} was removed after SVG generation")
-            }
-        } else {
-            bail!("Error executing 'dot'");
-        }
-
-         */
     }
 }
-
-    /*
-    @rm -f test_output/ * ;
-	@for wasm_file in $(WASM_FILE_LIST) ; do \
-	  original=`du test_files/$$wasm_file | cut -f1` ; \
-	  echo "$$wasm_file	$$original" ; \
-		for tool in $(TOOL_LIST) ; do \
-	  	  cp test_files/$$wasm_file test_output/$$wasm_file ; \
-		  $$tool test_output/$$wasm_file ; \
-		  size_after=`du test_output/$$wasm_file | cut -f1` ; \
-		  echo "$$tool	$$size_after" ; \
-		done ; \
-		echo "" ; \
-	done
-     */
