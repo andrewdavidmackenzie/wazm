@@ -29,10 +29,10 @@ fn test() {
             fs::copy(path, &test_output_file).unwrap();
             assert!(Command::new(tool)
                         .env("PATH", extended_path)
-                        .arg(path)
+                        .arg(&test_output_file)
                         .status().unwrap()
                         .success(), "Could not run tool");
-            let output = format!("{}.{}", path.display(), extension);
+            let output = format!("{}.{}", test_output_file.display(), extension);
             let output_path = PathBuf::from(output);
             let new_size = output_path.metadata().unwrap().len();
             println!("{tool} {new_size} {}%", (new_size * 100) / original_size);
