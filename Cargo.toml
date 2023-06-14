@@ -19,7 +19,14 @@ path = "src/lib/lib.rs"
 
 [[bin]]
 name = "wazm"
-path = "src/bin/wazm.rs"
+path = "src/bin/wazm/main.rs"
+
+[dependencies]
+clap = "~4"
+log = "0.4.18"
+env_logger = "0.10.0"
+error-chain = "0.12.2"
+wasmparser = "0.107.0"
 
 [dev-dependencies]
 wax = "0.5.0"
