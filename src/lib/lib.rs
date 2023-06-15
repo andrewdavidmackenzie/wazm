@@ -6,11 +6,11 @@ use errors::*;
 use std::io::Read;
 use wasmparser::{Parser, Chunk, Payload::*};
 use core::ops::Range;
+use std::fmt;
 
 /// A module with error types
 pub mod errors;
 
-#[derive(Debug)]
 struct Section {
     section_type: String,
     item_count: Option<u32>,
@@ -18,8 +18,25 @@ struct Section {
     size: usize,
 }
 
+impl fmt::Display for Section {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.item_count {
+            Some(count) => write!(f, "{:#010x} - {:#010x} ({:#10}) \t {:#18} {}",
+                                    self.range.start,
+                                    self.range.end,
+                                    self.size,
+                                    self.section_type,
+                                    count),
+            None => write!(f, "{:#010x} - {:#010x} ({:#10}) \t {:#18}",
+                             self.range.start,
+                             self.range.end,
+                             self.size,
+                             self.section_type),
+        }
+    }
+}
+
 /// Analysis results of a wasm file
-#[derive(Debug)]
 #[allow(dead_code)] // source not used in lib
 pub struct Analysis {
     source: String,
@@ -44,6 +61,22 @@ impl Analysis {
                 size,
             }
         );
+    }
+}
+
+impl fmt::Display for Analysis {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "WASM File: {}", self.source)?;
+        writeln!(f, "WASM Version: {}", self.version)?;
+        writeln!(f, "Function Count: {}", self.function_count)?;
+        writeln!(f, "Section Size Total: {}", self.section_size_total)?;
+        writeln!(f, "File Size on Disk: {}", self.file_size)?;
+        writeln!(f, "Sections:")?;
+        writeln!(f, "   Start        End         Size         Type               Item Count")?;
+        for section in &self.sections {
+            writeln!(f, "{}", section)?;
+        }
+        Ok(())
     }
 }
 
@@ -146,8 +179,10 @@ fn parse(mut reader: impl Read, analysis: &mut Analysis) -> Result<()> {
                 analysis.add_section("TypeSection", Some(section.count()), &section.range()),
             UnknownSection { id, contents, range } =>
                 analysis.add_section("UnknownSection", None, &range),
-            Version { num, encoding, range } =>
-                analysis.add_section("Version", None, &range),
+            Version { num, encoding, range } => {
+                analysis.version = num;
+                analysis.add_section("Magic & Version", None, &range);
+            }
 
             // Once we've reached the end of a parser we either resume
             // at the parent parser or we break out of the loop because

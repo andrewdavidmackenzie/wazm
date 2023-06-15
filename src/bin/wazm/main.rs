@@ -47,7 +47,7 @@ fn run(matches: ArgMatches) -> Result<()> {
 
     if matches.get_flag("analyze") {
         let analysis = wazm::analyze(&source)?;
-        println!("Analysis: {:#?}", analysis);
+        println!("Analysis:\n{}", analysis);
     } else {
         let destination_filename = format!("{source_filename}.wz");
         let destination = Path::new(&destination_filename);
