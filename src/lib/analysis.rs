@@ -34,10 +34,10 @@ impl fmt::Display for Section {
 }
 
 /// Analysis results of a wasm file
-#[allow(dead_code)] // source not used in lib
 pub struct Analysis {
     source: String,
     operator_usage: BTreeMap<String, u64>,
+    sorted_operator_usage: Vec<(String, u64)>,
     operator_count: u64,
     version: u16,
     sections: Vec<Section>,
@@ -59,7 +59,6 @@ impl Analysis {
             }
         );
     }
-
 
     // TODO here we can iterate over `body` to parse the function
 // and its locals
@@ -91,15 +90,16 @@ impl fmt::Display for Analysis {
         writeln!(f, "Section Size Total: {}", self.section_size_total)?;
         writeln!(f, "File Size on Disk: {}", self.file_size)?;
 
-        writeln!(f, "Sections:")?;
+        writeln!(f, "\nSections:")?;
         writeln!(f, "   Start        End         Size         Type               Item Count")?;
         for section in &self.sections {
             writeln!(f, "{}", section)?;
         }
 
-        writeln!(f, "Operator Usage:")?;
-        for (opname, count) in &self.operator_usage {
-            writeln!(f, "Operator: {:#010}, Count: {}", opname, count)?;
+        writeln!(f, "\nOperator Usage:")?;
+        writeln!(f, "\tOperator          Count:")?;
+        for (opname, count) in &self.sorted_operator_usage {
+            writeln!(f, "\t{:#018}{}", opname, count)?;
         }
 
         Ok(())
@@ -118,6 +118,7 @@ pub fn analyze(source: &Path) -> Result<Analysis> {
     let mut analysis = Analysis {
         source: source.canonicalize()?.display().to_string(),
         operator_usage: BTreeMap::<String, u64>::new(),
+        sorted_operator_usage: vec!(),
         operator_count: 0,
         file_size: source.metadata()?.len(),
         version: 0,
@@ -229,13 +230,10 @@ pub fn analyze(source: &Path) -> Result<Analysis> {
     }
 
     // order the operator usage
-    let mut vec: Vec<(&String, &u64)> = analysis.operator_usage.iter().collect();
-    vec.sort_by(|a, b| b.1.cmp(a.1));
-    let mut sorted_operator_usage = BTreeMap::<String, u64>::new();
-    for (op, count) in vec {
-        sorted_operator_usage.insert(op.to_string(), *count);
-    }
-    analysis.operator_usage = sorted_operator_usage;
+    let mut vec: Vec<(String, u64)> = analysis.operator_usage.iter()
+        .map(|(s, c)| (s.to_string(), *c)).collect();
+    vec.sort_by(|a, b| b.1.cmp(&a.1));
+    analysis.sorted_operator_usage = vec;
 
     Ok(analysis)
 }
