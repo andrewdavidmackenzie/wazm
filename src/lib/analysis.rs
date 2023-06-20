@@ -97,9 +97,9 @@ impl fmt::Display for Analysis {
         }
 
         writeln!(f, "\nOperator Usage:")?;
-        writeln!(f, "\tOperator          Count:")?;
+        writeln!(f, "\tOperator             Count")?;
         for (opname, count) in &self.sorted_operator_usage {
-            writeln!(f, "\t{:#018}{}", opname, count)?;
+            writeln!(f, "\t{:#018}{:#8}", opname, count)?;
         }
 
         Ok(())
