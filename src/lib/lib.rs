@@ -4,9 +4,10 @@ use std::io::BufReader;
 use errors::*;
 //use std::ops::Range;
 use std::io::Read;
-use wasmparser::{Parser, Chunk, Payload::*};
+use wasmparser::{Parser, Chunk, FunctionBody, Payload::*};
 use core::ops::Range;
 use std::fmt;
+use std::collections::BTreeMap;
 
 /// A module with error types
 pub mod errors;
@@ -23,13 +24,13 @@ impl fmt::Display for Section {
         match self.item_count {
             Some(count) => write!(f, "{:#010x} - {:#010x} ({:#10}) \t {:#18} {}",
                                     self.range.start,
-                                    self.range.end,
+                                    self.range.end - 1,
                                     self.size,
                                     self.section_type,
                                     count),
             None => write!(f, "{:#010x} - {:#010x} ({:#10}) \t {:#18}",
                              self.range.start,
-                             self.range.end,
+                             self.range.end - 1,
                              self.size,
                              self.section_type),
         }
@@ -40,8 +41,8 @@ impl fmt::Display for Section {
 #[allow(dead_code)] // source not used in lib
 pub struct Analysis {
     source: String,
-//    operator_usage: BTreeMap<String, u64>,
-//    operator_count: u64,
+    operator_usage: BTreeMap<String, u64>,
+    operator_count: u64,
     version: u16,
     sections: Vec<Section>,
     function_count: u64,
@@ -62,20 +63,49 @@ impl Analysis {
             }
         );
     }
+
+
+    // TODO here we can iterate over `body` to parse the function
+// and its locals
+// get_binary_reader();
+// get_locals_reader();
+    fn add_function(&mut self, function_body: &FunctionBody) -> Result<()> {
+        let mut reader = function_body.get_operators_reader()?;
+        while !reader.eof() {
+            let operator = reader.read()?;
+            let opname = format!("{:?}", operator).split_whitespace().next().unwrap_or("")
+                .to_string();
+            self.operator_usage.entry(opname)
+                .and_modify(|count| *count += 1)
+                .or_insert(1);
+            self.operator_count += 1;
+        }
+        self.function_count += 1;
+
+        Ok(())
+    }
 }
 
 impl fmt::Display for Analysis {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "WASM File: {}", self.source)?;
         writeln!(f, "WASM Version: {}", self.version)?;
+        writeln!(f, "Operators Count: {}", self.operator_count)?;
         writeln!(f, "Function Count: {}", self.function_count)?;
         writeln!(f, "Section Size Total: {}", self.section_size_total)?;
         writeln!(f, "File Size on Disk: {}", self.file_size)?;
+
         writeln!(f, "Sections:")?;
         writeln!(f, "   Start        End         Size         Type               Item Count")?;
         for section in &self.sections {
             writeln!(f, "{}", section)?;
         }
+
+        writeln!(f, "Operator Usage:")?;
+        for (opname, count) in &self.operator_usage {
+            writeln!(f, "Operator: {:#010}, Count: {}", opname, count)?;
+        }
+
         Ok(())
     }
 }
@@ -86,11 +116,25 @@ pub fn compress(source: &Path, destination: &Path) -> Result<u64> {
     std::fs::copy(source, destination).chain_err(|| "Could not compress")
 }
 
-fn parse(mut reader: impl Read, analysis: &mut Analysis) -> Result<()> {
+/// Analyze the file at `source` to see what sections it has and operators it uses
+pub fn analyze(source: &Path) -> Result<Analysis> {
+    let f = File::open(source)?;
+    let mut reader = BufReader::new(f);
     let mut buf = Vec::new();
     let mut parser = Parser::new(0);
     let mut eof = false;
     let mut stack = Vec::new();
+
+    let mut analysis = Analysis {
+        source: source.canonicalize()?.display().to_string(),
+        operator_usage: BTreeMap::<String, u64>::new(),
+        operator_count: 0,
+        file_size: source.metadata()?.len(),
+        version: 0,
+        sections: Vec::new(),
+        section_size_total: 0,
+        function_count: 0,
+    };
 
     loop {
         let (payload, consumed) = match parser.parse(&buf, eof)? {
@@ -121,14 +165,7 @@ fn parse(mut reader: impl Read, analysis: &mut Analysis) -> Result<()> {
             // individually.
             CodeSectionStart { count, range, size } =>
                 analysis.add_section("CodeSectionStart", Some(count), &range),
-            CodeSectionEntry(function_body) => {
-                // TODO here we can iterate over `body` to parse the function
-                // and its locals
-                // get_binary_reader();
-                // get_locals_reader();
-                // get_operators_reader()
-                analysis.function_count += 1;
-            }
+            CodeSectionEntry(function_body) => analysis.add_function(&function_body)?,
             ComponentSection { parser, range } =>
                 analysis.add_section("ComponentSection", None, &range),
             ComponentInstanceSection(section) =>
@@ -201,37 +238,14 @@ fn parse(mut reader: impl Read, analysis: &mut Analysis) -> Result<()> {
         buf.drain(..consumed);
     }
 
-    Ok(())
-}
-
-/// Compress file at `source`into a new file at `destination`
-/// Return a Result with the size of the output file in bytes
-pub fn analyze(source: &Path) -> Result<Analysis> {
-//    let mut operator_usage = HashMap::<String, u64>::new();
-//    let mut operator_count = 0;
-
-    let mut analysis = Analysis {
-        source: source.canonicalize()?.display().to_string(),
-//        operator_usage: sorted_operator_usage,
-//        operator_count,
-        file_size: source.metadata()?.len(),
-        version: 0,
-        sections: Vec::new(),
-        section_size_total: 0,
-        function_count: 0,
-    };
-
-    let f = File::open(source)?;
-    let reader = BufReader::new(f);
-
-    let _ = parse(reader, &mut analysis)?;
+    // order the operator usage
+    let mut vec: Vec<(&String, &u64)> = analysis.operator_usage.iter().collect();
+    vec.sort_by(|a, b| b.1.cmp(a.1));
+    let mut sorted_operator_usage = BTreeMap::<String, u64>::new();
+    for (op, count) in vec {
+        sorted_operator_usage.insert(op.to_string(), *count);
+    }
+    analysis.operator_usage = sorted_operator_usage;
 
     Ok(analysis)
 }
-
-/*
-fn print_range(section: &str, range: &Range<usize>) {
-    println!("{:>40}: {:#010x} - {:#010x}", section, range.start, range.end);
-}
-
- */
