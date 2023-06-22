@@ -18,15 +18,17 @@ struct Section {
 impl fmt::Display for Section {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.item_count {
-            Some(count) => write!(f, "{:#010x} - {:#010x} ({:#10}) \t {:#18} {}",
+            Some(count) => write!(f, "{:#010x} - {:#010x} {:#10x} {:#10} \t\t {:#18} {}",
                                   self.range.start,
                                   self.range.end - 1,
                                   self.size,
+                                  self.size,
                                   self.section_type,
                                   count),
-            None => write!(f, "{:#010x} - {:#010x} ({:#10}) \t {:#18}",
+            None => write!(f, "{:#010x} - {:#010x} {:#10x} {:#10} \t\t {:#18}",
                            self.range.start,
                            self.range.end - 1,
+                           self.size,
                            self.size,
                            self.section_type),
         }
@@ -91,7 +93,7 @@ impl fmt::Display for Analysis {
         writeln!(f, "File Size on Disk: {}", self.file_size)?;
 
         writeln!(f, "\nSections:")?;
-        writeln!(f, "   Start        End         Size         Type               Item Count")?;
+        writeln!(f, "   Start        End       Size (HEX)  Size (Dec)         Type               Item Count")?;
         for section in &self.sections {
             writeln!(f, "{}", section)?;
         }
