@@ -39,14 +39,18 @@ impl fmt::Display for Section {
 /// Analysis results of a wasm file
 pub struct Analysis {
     source: String,
-    operator_usage: BTreeMap<String, u64>,
-    sorted_operator_usage: Vec<(String, u64)>,
-    operator_count: u64,
     version: u16,
+    file_size: u64,
+
+    include_sections: bool,
     sections: Vec<Section>,
     function_count: u64,
     sections_size_total: usize,
-    file_size: u64,
+
+    include_operators: bool,
+    operator_usage: BTreeMap<String, u64>,
+    sorted_operator_usage: Vec<(String, u64)>,
+    operator_count: u64,
 }
 
 impl Analysis {
@@ -60,7 +64,6 @@ impl Analysis {
             let section_header_size = leb128::write::unsigned(&mut writable, size as u64)
                 .expect("Could not encode in LEB128") + 1;
             self.sections_size_total += section_header_size; // one byte for section type
-            println!("Section type: {section_type}, size: {size}, header size: {section_header_size}");
         }
 
         self.sections.push(
@@ -100,24 +103,28 @@ impl fmt::Display for Analysis {
         writeln!(f, "WASM Version: {}", self.version)?;
         writeln!(f, "Operators Count: {}", self.operator_count)?;
         writeln!(f, "Function Count: {}", self.function_count)?;
-        writeln!(f, "Sections Size Total: {}", self.sections_size_total)?;
         writeln!(f, "File Size on Disk: {}", self.file_size)?;
 
-        let unaccounted_for = self.file_size - self.sections_size_total as u64;
-        if unaccounted_for != 0 {
-            writeln!(f, "Bytes unaccounted for: {}", unaccounted_for)?;
+        if self.include_sections {
+            writeln!(f, "\nSections:")?;
+            writeln!(f, "   Start        End       Size (HEX)  Size (Dec)         Type               Item Count")?;
+            for section in &self.sections {
+                writeln!(f, "{}", section)?;
+            }
+
+            writeln!(f, "Sections Size Total: {}", self.sections_size_total)?;
+            let unaccounted_for = self.file_size - self.sections_size_total as u64;
+            if unaccounted_for != 0 {
+                writeln!(f, "Bytes unaccounted for: {}", unaccounted_for)?;
+            }
         }
 
-        writeln!(f, "\nSections:")?;
-        writeln!(f, "   Start        End       Size (HEX)  Size (Dec)         Type               Item Count")?;
-        for section in &self.sections {
-            writeln!(f, "{}", section)?;
-        }
-
-        writeln!(f, "\nOperator Usage:")?;
-        writeln!(f, "\tOperator             Count")?;
-        for (opname, count) in &self.sorted_operator_usage {
-            writeln!(f, "\t{:#018}{:#8}", opname, count)?;
+        if self.include_operators {
+            writeln!(f, "\nOperator Usage:")?;
+            writeln!(f, "\tOperator             Count")?;
+            for (opname, count) in &self.sorted_operator_usage {
+                writeln!(f, "\t{:#018}{:#8}", opname, count)?;
+            }
         }
 
         Ok(())
@@ -135,14 +142,18 @@ pub fn analyze(source: &Path) -> Result<Analysis> {
 
     let mut analysis = Analysis {
         source: source.canonicalize()?.display().to_string(),
+        file_size: source.metadata()?.len(),
+        version: 0,
+        function_count: 0,
+
+        include_sections: true,
+        sections: Vec::new(),
+        sections_size_total: 0,
+
+        include_operators: true,
         operator_usage: BTreeMap::<String, u64>::new(),
         sorted_operator_usage: vec!(),
         operator_count: 0,
-        file_size: source.metadata()?.len(),
-        version: 0,
-        sections: Vec::new(),
-        sections_size_total: 0,
-        function_count: 0,
     };
 
     loop {
