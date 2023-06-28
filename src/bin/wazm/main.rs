@@ -46,7 +46,9 @@ fn run(matches: ArgMatches) -> Result<()> {
     }
 
     if matches.get_flag("analyze") {
-        let analysis = wazm::analyze(&source)?;
+        let analysis = wazm::analyze(&source,
+                                     matches.get_flag("analyze-sections"),
+                                     matches.get_flag("analyze-operators"))?;
         println!("Analysis:\n{}", analysis);
     } else {
         let destination_filename = format!("{source_filename}.wz");
@@ -72,6 +74,18 @@ fn get_matches() -> ArgMatches {
             .long("analyze")
             .action(clap::ArgAction::SetTrue)
             .help("Analyze the WASM file"))
+        .arg(Arg::new("analyze-sections")
+            .short('s')
+            .long("analyze-sections")
+            .requires("analyze")
+            .action(clap::ArgAction::SetTrue)
+            .help("Analyze the Sections of the WASM file"))
+        .arg(Arg::new("analyze-operators")
+            .short('o')
+            .long("analyze-operators")
+            .requires("analyze")
+            .action(clap::ArgAction::SetTrue)
+            .help("Analyze the Operators used in the WASM file"))
         .arg(Arg::new("wasm-file")
             .num_args(1)
             .help("the file path of the wasm file to compress/decompress"));

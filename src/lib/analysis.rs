@@ -132,7 +132,7 @@ impl fmt::Display for Analysis {
 }
 
 /// Analyze the file at `source` to see what sections it has and operators it uses
-pub fn analyze(source: &Path) -> Result<Analysis> {
+pub fn analyze(source: &Path, include_sections: bool, include_operators: bool) -> Result<Analysis> {
     let f = File::open(source)?;
     let mut reader = BufReader::new(f);
     let mut buf = Vec::new();
@@ -146,11 +146,11 @@ pub fn analyze(source: &Path) -> Result<Analysis> {
         version: 0,
         function_count: 0,
 
-        include_sections: true,
+        include_sections,
         sections: Vec::new(),
         sections_size_total: 0,
 
-        include_operators: true,
+        include_operators,
         operator_usage: BTreeMap::<String, u64>::new(),
         sorted_operator_usage: vec!(),
         operator_count: 0,
