@@ -11,22 +11,31 @@ use leb128;
 
 struct Section {
     section_type: String,
+    header_location: usize,
     item_count: Option<u32>,
     range: Range<usize>,
     size: usize,
 }
 
+impl Section {
+    fn header(f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "Header Start     Content Start    Content End     Size (HEX)    Size    Type               Items")
+    }
+}
+
 impl fmt::Display for Section {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.item_count {
-            Some(count) => write!(f, "{:#010x} - {:#010x} {:#10x} {:#10} \t\t {:#18} {}",
+            Some(count) => write!(f, "{:#014x} : {:#014x} - {:#014x}{:#10x}{:#10}  {:<18}{:#8}",
+                                  self.header_location,
                                   self.range.start,
                                   self.range.end - 1,
                                   self.size,
                                   self.size,
                                   self.section_type,
                                   count),
-            None => write!(f, "{:#010x} - {:#010x} {:#10x} {:#10} \t\t {:#18}",
+            None => write!(f, "{:#014} : {:#014x} - {:#014x}{:#10x}{:#10}  {:<18}",
+                           "",
                            self.range.start,
                            self.range.end - 1,
                            self.size,
@@ -58,16 +67,20 @@ impl Analysis {
         let size = range.end - range.start;
         self.sections_size_total += size;
 
-        if !section_type.starts_with("Magic") {
+        let section_header_size = if section_type.starts_with("Magic") {
+            0
+        } else {
             let mut buf = [0; 4]; // LEB128 encoding of u32 should not exceed 4 bytes
             let mut writable = &mut buf[..];
-            let section_header_size = leb128::write::unsigned(&mut writable, size as u64)
-                .expect("Could not encode in LEB128") + 1;
-            self.sections_size_total += section_header_size; // one byte for section type
-        }
+            leb128::write::unsigned(&mut writable, size as u64)
+                .expect("Could not encode in LEB128") + 1
+        };
+
+        self.sections_size_total += section_header_size; // one byte for section type
 
         self.sections.push(
             Section {
+                header_location: range.start - section_header_size,
                 section_type: section_type.to_owned(),
                 item_count,
                 range: range.clone(),
@@ -107,7 +120,7 @@ impl fmt::Display for Analysis {
 
         if self.include_sections {
             writeln!(f, "\nSections:")?;
-            writeln!(f, "   Start        End       Size (HEX)  Size (Dec)         Type               Item Count")?;
+            Section::header(f)?;
             for section in &self.sections {
                 writeln!(f, "{}", section)?;
             }
