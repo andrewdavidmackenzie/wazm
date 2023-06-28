@@ -7,6 +7,7 @@ use wasmparser::{Parser, Chunk, FunctionBody, Payload::*};
 use core::ops::Range;
 use std::fmt;
 use std::collections::BTreeMap;
+use leb128;
 
 struct Section {
     section_type: String,
@@ -44,14 +45,24 @@ pub struct Analysis {
     version: u16,
     sections: Vec<Section>,
     function_count: u64,
-    section_size_total: usize,
+    sections_size_total: usize,
     file_size: u64,
 }
 
 impl Analysis {
     fn add_section(&mut self, section_type: &str, item_count: Option<u32>, range: &Range<usize>) {
         let size = range.end - range.start;
-        self.section_size_total += size;
+        self.sections_size_total += size;
+
+        if !section_type.starts_with("Magic") {
+            let mut buf = [0; 4]; // LEB128 encoding of u32 should not exceed 4 bytes
+            let mut writable = &mut buf[..];
+            let section_header_size = leb128::write::unsigned(&mut writable, size as u64)
+                .expect("Could not encode in LEB128") + 1;
+            self.sections_size_total += section_header_size; // one byte for section type
+            println!("Section type: {section_type}, size: {size}, header size: {section_header_size}");
+        }
+
         self.sections.push(
             Section {
                 section_type: section_type.to_owned(),
@@ -89,8 +100,13 @@ impl fmt::Display for Analysis {
         writeln!(f, "WASM Version: {}", self.version)?;
         writeln!(f, "Operators Count: {}", self.operator_count)?;
         writeln!(f, "Function Count: {}", self.function_count)?;
-        writeln!(f, "Section Size Total: {}", self.section_size_total)?;
+        writeln!(f, "Sections Size Total: {}", self.sections_size_total)?;
         writeln!(f, "File Size on Disk: {}", self.file_size)?;
+
+        let unaccounted_for = self.file_size - self.sections_size_total as u64;
+        if unaccounted_for != 0 {
+            writeln!(f, "Bytes unaccounted for: {}", unaccounted_for)?;
+        }
 
         writeln!(f, "\nSections:")?;
         writeln!(f, "   Start        End       Size (HEX)  Size (Dec)         Type               Item Count")?;
@@ -125,7 +141,7 @@ pub fn analyze(source: &Path) -> Result<Analysis> {
         file_size: source.metadata()?.len(),
         version: 0,
         sections: Vec::new(),
-        section_size_total: 0,
+        sections_size_total: 0,
         function_count: 0,
     };
 

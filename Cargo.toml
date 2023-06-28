@@ -27,6 +27,7 @@ log = "0.4.18"
 env_logger = "0.10.0"
 error-chain = "0.12.2"
 wasmparser = "0.107.0"
+leb128 = "0.2.5"
 
 [dev-dependencies]
 wax = "0.5.0"
