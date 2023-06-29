@@ -4,6 +4,8 @@ use std::io::BufReader;
 use crate::errors::*;
 use std::io::Read;
 use wasmparser::{Parser, Chunk, FunctionBody, Payload::*};
+use wasmparser::ExportSectionReader;
+use wasmparser::ExternalKind;
 use core::ops::Range;
 use std::fmt;
 use std::collections::BTreeMap;
@@ -53,6 +55,8 @@ pub struct Analysis {
 
     include_functions: bool,
     function_count: u64,
+    exported_functions_count: u32,
+    exported_functions: Vec<String>,
 
     include_sections: bool,
     sections: Vec<Section>,
@@ -65,34 +69,35 @@ pub struct Analysis {
 }
 
 impl Analysis {
-    fn add_section(&mut self, section_type: &str, item_count: Option<u32>, range: &Range<usize>) {
-        if !self.include_sections {
-            return;
+    fn add_section(&mut self, section_type: &str, item_count: Option<u32>, range: &Range<usize>)
+    -> Result<()> {
+        if self.include_sections {
+            let size = range.end - range.start;
+            self.sections_size_total += size;
+
+            let section_header_size = if section_type.starts_with("Magic") {
+                0
+            } else {
+                let mut buf = [0; 4]; // LEB128 encoding of u32 should not exceed 4 bytes
+                let mut writable = &mut buf[..];
+                leb128::write::unsigned(&mut writable, size as u64)
+                    .expect("Could not encode in LEB128") + 1  // one byte for section type
+            };
+
+            self.sections_size_total += section_header_size;
+
+            self.sections.push(
+                Section {
+                    header_location: range.start - section_header_size,
+                    section_type: section_type.to_owned(),
+                    item_count,
+                    range: range.clone(),
+                    size,
+                }
+            );
         }
 
-        let size = range.end - range.start;
-        self.sections_size_total += size;
-
-        let section_header_size = if section_type.starts_with("Magic") {
-            0
-        } else {
-            let mut buf = [0; 4]; // LEB128 encoding of u32 should not exceed 4 bytes
-            let mut writable = &mut buf[..];
-            leb128::write::unsigned(&mut writable, size as u64)
-                .expect("Could not encode in LEB128") + 1
-        };
-
-        self.sections_size_total += section_header_size; // one byte for section type
-
-        self.sections.push(
-            Section {
-                header_location: range.start - section_header_size,
-                section_type: section_type.to_owned(),
-                item_count,
-                range: range.clone(),
-                size,
-            }
-        );
+        Ok(())
     }
 
     // TODO here we can iterate over `body` to parse the function
@@ -121,6 +126,21 @@ impl Analysis {
 
         Ok(())
     }
+
+    fn add_exports(&mut self, reader: &ExportSectionReader) -> Result<()> {
+        if self.include_functions {
+            for export in reader.clone().into_iter() {
+                if let Ok(ex) = export {
+                    if ex.kind == ExternalKind::Func {
+                        self.exported_functions.push(ex.name.to_owned());
+                        self.exported_functions_count += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl fmt::Display for Analysis {
@@ -146,6 +166,12 @@ impl fmt::Display for Analysis {
         if self.include_functions {
             writeln!(f, "\nFunctions:")?;
             writeln!(f, "Function Count: {}", self.function_count)?;
+            writeln!(f, "Exported Function Count: {}", self.exported_functions_count)?;
+
+            for export_name in &self.exported_functions {
+                writeln!(f, "\t Exported Function: '{}'", export_name)?;
+            }
+
             if self.include_operators {
                 writeln!(f, "\nOperators:")?;
                 writeln!(f, "Operators Count: {}", self.operator_count)?;
@@ -180,6 +206,8 @@ pub fn analyze(source: &Path,
 
         include_functions,
         function_count: 0,
+        exported_functions_count: 0,
+        exported_functions: vec!(),
 
         include_sections,
         sections: Vec::new(),
@@ -219,61 +247,63 @@ pub fn analyze(source: &Path,
             // afterwards we can parse and handle each function
             // individually.
             CodeSectionStart { count, range, size } =>
-                analysis.add_section("CodeSectionStart", Some(count), &range),
+                analysis.add_section("CodeSectionStart", Some(count), &range)?,
             CodeSectionEntry(function_body) => analysis.add_function(&function_body)?,
             ComponentSection { parser, range } =>
-                analysis.add_section("ComponentSection", None, &range),
+                analysis.add_section("ComponentSection", None, &range)?,
             ComponentInstanceSection(section) =>
-                analysis.add_section("ComponentInstanceSection", None, &section.range()),
+                analysis.add_section("ComponentInstanceSection", None, &section.range())?,
             ComponentAliasSection(section) =>
-                analysis.add_section("ComponentAliasSection", None, &section.range()),
+                analysis.add_section("ComponentAliasSection", None, &section.range())?,
             ComponentTypeSection(section) =>
-                analysis.add_section("ComponentTypeSection", None, &section.range()),
+                analysis.add_section("ComponentTypeSection", None, &section.range())?,
             ComponentCanonicalSection(section) =>
-                analysis.add_section("ComponentCanonicalSection", None, &section.range()),
+                analysis.add_section("ComponentCanonicalSection", None, &section.range())?,
             ComponentStartSection { start, range } =>
-                analysis.add_section("ComponentStartSection", None, &range),
+                analysis.add_section("ComponentStartSection", None, &range)?,
             ComponentImportSection(section) =>
-                analysis.add_section("ComponentImportSection", None, &section.range()),
+                analysis.add_section("ComponentImportSection", None, &section.range())?,
             ComponentExportSection(section) =>
-                analysis.add_section("ComponentExportSection", None, &section.range()),
+                analysis.add_section("ComponentExportSection", None, &section.range())?,
             CoreTypeSection(section) =>
-                analysis.add_section("CoreTypeSection", None, &section.range()),
+                analysis.add_section("CoreTypeSection", None, &section.range())?,
             CustomSection(section) =>
-                analysis.add_section("CustomSection", None, &section.range()),
+                analysis.add_section("CustomSection", None, &section.range())?,
             DataCountSection { count, range } =>
-                analysis.add_section("DataCountSection", Some(count), &range),
+                analysis.add_section("DataCountSection", Some(count), &range)?,
             DataSection(section) =>
-                analysis.add_section("DataSection", Some(section.count()), &section.range()),
+                analysis.add_section("DataSection", Some(section.count()), &section.range())?,
             ElementSection(section) =>
-                analysis.add_section("ElementSection", Some(section.count()), &section.range()),
-            ExportSection(section) =>
-                analysis.add_section("ExportSection", Some(section.count()), &section.range()),
+                analysis.add_section("ElementSection", Some(section.count()), &section.range())?,
+            ExportSection(section) => {
+                analysis.add_section("ExportSection", Some(section.count()), &section.range())?;
+                analysis.add_exports(&section)?;
+            }
             FunctionSection(section) =>
-                analysis.add_section("FunctionSection", Some(section.count()), &section.range()),
+                analysis.add_section("FunctionSection", Some(section.count()), &section.range())?,
             GlobalSection(section) =>
-                analysis.add_section("GlobalSection", Some(section.count()), &section.range()),
+                analysis.add_section("GlobalSection", Some(section.count()), &section.range())?,
             ImportSection(section) =>
-                analysis.add_section("ImportSection", Some(section.count()), &section.range()),
+                analysis.add_section("ImportSection", Some(section.count()), &section.range())?,
             InstanceSection(section) =>
-                analysis.add_section("InstanceSection", Some(section.count()), &section.range()),
+                analysis.add_section("InstanceSection", Some(section.count()), &section.range())?,
             MemorySection(section) =>
-                analysis.add_section("MemorySection", Some(section.count()), &section.range()),
+                analysis.add_section("MemorySection", Some(section.count()), &section.range())?,
             ModuleSection { parser, range } =>
-                analysis.add_section("ModuleSection", None, &range),
+                analysis.add_section("ModuleSection", None, &range)?,
             StartSection { func, range } =>
-                analysis.add_section("StartSection", None, &range),
+                analysis.add_section("StartSection", None, &range)?,
             TableSection(section) =>
-                analysis.add_section("TableSection", Some(section.count()), &section.range()),
+                analysis.add_section("TableSection", Some(section.count()), &section.range())?,
             TagSection(section) =>
-                analysis.add_section("TagSection", Some(section.count()), &section.range()),
+                analysis.add_section("TagSection", Some(section.count()), &section.range())?,
             TypeSection(section) =>
-                analysis.add_section("TypeSection", Some(section.count()), &section.range()),
+                analysis.add_section("TypeSection", Some(section.count()), &section.range())?,
             UnknownSection { id, contents, range } =>
-                analysis.add_section("UnknownSection", None, &range),
+                analysis.add_section("UnknownSection", None, &range)?,
             Version { num, encoding, range } => {
                 analysis.version = num;
-                analysis.add_section("Magic & Version", None, &range);
+                analysis.add_section("Magic & Version", None, &range)?;
             }
 
             // Once we've reached the end of a parser we either resume
@@ -291,6 +321,8 @@ pub fn analyze(source: &Path,
         // once we're done processing the payload we can forget the
         // original.
         buf.drain(..consumed);
+
+        // analyze function call graph (if requested) starting at "exported" entry points
     }
 
     // order the operator usage
