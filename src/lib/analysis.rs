@@ -51,9 +51,11 @@ pub struct Analysis {
     version: u16,
     file_size: u64,
 
+    include_functions: bool,
+    function_count: u64,
+
     include_sections: bool,
     sections: Vec<Section>,
-    function_count: u64,
     sections_size_total: usize,
 
     include_operators: bool,
@@ -64,6 +66,10 @@ pub struct Analysis {
 
 impl Analysis {
     fn add_section(&mut self, section_type: &str, item_count: Option<u32>, range: &Range<usize>) {
+        if !self.include_sections {
+            return;
+        }
+
         let size = range.end - range.start;
         self.sections_size_total += size;
 
@@ -94,16 +100,23 @@ impl Analysis {
 // get_binary_reader();
 // get_locals_reader();
     fn add_function(&mut self, function_body: &FunctionBody) -> Result<()> {
-        let mut reader = function_body.get_operators_reader()?;
-        while !reader.eof() {
-            let operator = reader.read()?;
-            let opname = format!("{:?}", operator).split_whitespace().next().unwrap_or("")
-                .to_string();
-            self.operator_usage.entry(opname)
-                .and_modify(|count| *count += 1)
-                .or_insert(1);
-            self.operator_count += 1;
+        if !self.include_functions {
+            return Ok(());
         }
+
+        if self.include_operators {
+            let mut reader = function_body.get_operators_reader()?;
+            while !reader.eof() {
+                let operator = reader.read()?;
+                let opname = format!("{:?}", operator).split_whitespace().next().unwrap_or("")
+                    .to_string();
+                self.operator_usage.entry(opname)
+                    .and_modify(|count| *count += 1)
+                    .or_insert(1);
+                self.operator_count += 1;
+            }
+        }
+
         self.function_count += 1;
 
         Ok(())
@@ -114,8 +127,6 @@ impl fmt::Display for Analysis {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "WASM File: {}", self.source)?;
         writeln!(f, "WASM Version: {}", self.version)?;
-        writeln!(f, "Operators Count: {}", self.operator_count)?;
-        writeln!(f, "Function Count: {}", self.function_count)?;
         writeln!(f, "File Size on Disk: {}", self.file_size)?;
 
         if self.include_sections {
@@ -132,11 +143,17 @@ impl fmt::Display for Analysis {
             }
         }
 
-        if self.include_operators {
-            writeln!(f, "\nOperator Usage:")?;
-            writeln!(f, "\tOperator             Count")?;
-            for (opname, count) in &self.sorted_operator_usage {
-                writeln!(f, "\t{:#018}{:#8}", opname, count)?;
+        if self.include_functions {
+            writeln!(f, "\nFunctions:")?;
+            writeln!(f, "Function Count: {}", self.function_count)?;
+            if self.include_operators {
+                writeln!(f, "\nOperators:")?;
+                writeln!(f, "Operators Count: {}", self.operator_count)?;
+                writeln!(f, "Operator Usage:")?;
+                writeln!(f, "\tOperator             Count")?;
+                for (opname, count) in &self.sorted_operator_usage {
+                    writeln!(f, "\t{:#018}{:#8}", opname, count)?;
+                }
             }
         }
 
@@ -145,7 +162,10 @@ impl fmt::Display for Analysis {
 }
 
 /// Analyze the file at `source` to see what sections it has and operators it uses
-pub fn analyze(source: &Path, include_sections: bool, include_operators: bool) -> Result<Analysis> {
+pub fn analyze(source: &Path,
+               include_sections: bool,
+               include_functions: bool,
+               include_operators: bool) -> Result<Analysis> {
     let f = File::open(source)?;
     let mut reader = BufReader::new(f);
     let mut buf = Vec::new();
@@ -157,6 +177,8 @@ pub fn analyze(source: &Path, include_sections: bool, include_operators: bool) -
         source: source.canonicalize()?.display().to_string(),
         file_size: source.metadata()?.len(),
         version: 0,
+
+        include_functions,
         function_count: 0,
 
         include_sections,

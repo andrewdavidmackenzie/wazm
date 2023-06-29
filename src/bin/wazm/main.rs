@@ -48,6 +48,7 @@ fn run(matches: ArgMatches) -> Result<()> {
     if matches.get_flag("analyze") {
         let analysis = wazm::analyze(&source,
                                      matches.get_flag("analyze-sections"),
+                                     matches.get_flag("analyze-functions"),
                                      matches.get_flag("analyze-operators"))?;
         println!("Analysis:\n{}", analysis);
     } else {
@@ -80,10 +81,17 @@ fn get_matches() -> ArgMatches {
             .requires("analyze")
             .action(clap::ArgAction::SetTrue)
             .help("Analyze the Sections of the WASM file"))
+        .arg(Arg::new("analyze-functions")
+            .short('f')
+            .long("analyze-functions")
+            .requires("analyze")
+            .action(clap::ArgAction::SetTrue)
+            .help("Analyze the Functions in the WASM file"))
         .arg(Arg::new("analyze-operators")
             .short('o')
             .long("analyze-operators")
             .requires("analyze")
+            .requires("analyze-functions")
             .action(clap::ArgAction::SetTrue)
             .help("Analyze the Operators used in the WASM file"))
         .arg(Arg::new("wasm-file")
