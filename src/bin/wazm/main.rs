@@ -49,8 +49,10 @@ fn run(matches: ArgMatches) -> Result<()> {
         let analysis = wazm::analyze(&source,
                                      matches.get_flag("analyze-sections"),
                                      matches.get_flag("analyze-functions"),
-                                     matches.get_flag("analyze-operators"))?;
-        println!("Analysis:\n{}", analysis);
+                                     matches.get_flag("analyze-operators"),
+                                     matches.get_flag("analyze-call-tree"),
+        )?;
+        println!("{}", analysis);
     } else {
         let destination_filename = format!("{source_filename}.wz");
         let destination = Path::new(&destination_filename);
@@ -87,6 +89,12 @@ fn get_matches() -> ArgMatches {
             .requires("analyze")
             .action(clap::ArgAction::SetTrue)
             .help("Analyze the Functions in the WASM file"))
+        .arg(Arg::new("analyze-call-tree")
+            .short('t')
+            .long("analyze-call-tree")
+            .requires("analyze")
+            .action(clap::ArgAction::SetTrue)
+            .help("Analyze the call-tree of Functions in the WASM file"))
         .arg(Arg::new("analyze-operators")
             .short('o')
             .long("analyze-operators")

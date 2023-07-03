@@ -3,9 +3,11 @@ use std::fs::File;
 use std::io::BufReader;
 use crate::errors::*;
 use std::io::Read;
+use std::collections::HashMap;
 use wasmparser::{Parser, Chunk, FunctionBody, Payload::*};
 use wasmparser::ExportSectionReader;
 use wasmparser::ExternalKind;
+use wasmparser::Operator;
 use core::ops::Range;
 use std::fmt;
 use std::collections::BTreeMap;
@@ -56,7 +58,10 @@ pub struct Analysis {
     include_functions: bool,
     function_count: u64,
     exported_functions_count: u32,
-    exported_functions: Vec<String>,
+    exported_functions: HashMap<usize, String>,
+
+    include_function_call_tree: bool,
+    function_call_list: HashMap<usize, Vec<usize>>, // index of caller --> vector of indexes called
 
     include_sections: bool,
     sections: Vec<Section>,
@@ -100,19 +105,32 @@ impl Analysis {
         Ok(())
     }
 
-    // TODO here we can iterate over `body` to parse the function
-// and its locals
-// get_binary_reader();
-// get_locals_reader();
-    fn add_function(&mut self, function_body: &FunctionBody) -> Result<()> {
+    fn add_function_call(&mut self, caller_index: usize, function_index: u32) {
+        if self.include_function_call_tree {
+            let called_index = function_index as usize;
+            self.function_call_list.entry(caller_index)
+                .and_modify(|v| { if !v.contains(&called_index) { v.push(called_index) } })
+                .or_insert(vec!());
+        }
+    }
+
+    fn add_function(&mut self, function_body: &FunctionBody, index: usize) -> Result<()> {
         if !self.include_functions {
             return Ok(());
         }
 
-        if self.include_operators {
-            let mut reader = function_body.get_operators_reader()?;
-            while !reader.eof() {
-                let operator = reader.read()?;
+        let mut found_return = false;
+        let mut reader = function_body.get_operators_reader()?;
+        while !reader.eof() {
+            let operator = reader.read()?;
+
+            match operator {
+                Operator::Return => found_return = true,
+                Operator::Call{function_index} => self.add_function_call(index, function_index),
+                _ => {}
+            }
+
+            if self.include_operators {
                 let opname = format!("{:?}", operator).split_whitespace().next().unwrap_or("")
                     .to_string();
                 self.operator_usage.entry(opname)
@@ -120,6 +138,10 @@ impl Analysis {
                     .or_insert(1);
                 self.operator_count += 1;
             }
+        }
+
+        if !found_return {
+           // TODO println!("Function did not contain Return");
         }
 
         self.function_count += 1;
@@ -132,7 +154,7 @@ impl Analysis {
             for export in reader.clone().into_iter() {
                 if let Ok(ex) = export {
                     if ex.kind == ExternalKind::Func {
-                        self.exported_functions.push(ex.name.to_owned());
+                        self.exported_functions.insert(ex.index as usize, ex.name.to_owned());
                         self.exported_functions_count += 1;
                     }
                 }
@@ -141,13 +163,38 @@ impl Analysis {
 
         Ok(())
     }
+
+    fn print_called_list(&self, call_chain: Vec<usize>, f: &mut fmt::Formatter) -> fmt::Result {
+        let index = call_chain.last().unwrap_or(&1);
+        if let Some(called_list) = self.function_call_list.get(index) {
+            let level = call_chain.len();
+            for called in called_list {
+                if call_chain.contains(called) {
+                    writeln!(f, "     {}+- #{} Cyclic call", format_args!("{: >1$}", "", level * 3), called)?;
+                } else {
+                    writeln!(f, "     {}+- #{}", format_args!("{: >1$}", "", level * 3), called)?;
+                    let mut new_chain = call_chain.clone();
+                    new_chain.push(*called);
+                    self.print_called_list(new_chain, f)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn print_call_tree(&self, root_index: &usize, name: &str, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "\t#{} '{}'", root_index, name)?;
+        self.print_called_list(vec!(*root_index), f)?;
+        writeln!(f, "")
+    }
 }
 
 impl fmt::Display for Analysis {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "File Stats:")?;
         writeln!(f, "WASM File: {}", self.source)?;
         writeln!(f, "WASM Version: {}", self.version)?;
-        writeln!(f, "File Size on Disk: {}", self.file_size)?;
+        writeln!(f, "File Size: {}", self.file_size)?;
 
         if self.include_sections {
             writeln!(f, "\nSections:")?;
@@ -156,7 +203,7 @@ impl fmt::Display for Analysis {
                 writeln!(f, "{}", section)?;
             }
 
-            writeln!(f, "Sections Size Total: {}", self.sections_size_total)?;
+            writeln!(f, "Total Size: {}", self.sections_size_total)?;
             let unaccounted_for = self.file_size - self.sections_size_total as u64;
             if unaccounted_for != 0 {
                 writeln!(f, "Bytes unaccounted for: {}", unaccounted_for)?;
@@ -168,8 +215,27 @@ impl fmt::Display for Analysis {
             writeln!(f, "Function Count: {}", self.function_count)?;
             writeln!(f, "Exported Function Count: {}", self.exported_functions_count)?;
 
-            for export_name in &self.exported_functions {
-                writeln!(f, "\t Exported Function: '{}'", export_name)?;
+            for (function_index, export_name) in &self.exported_functions {
+                writeln!(f, "\t Exported Function: {:#5} '{}'", function_index, export_name)?;
+            }
+
+            if self.include_function_call_tree {
+                writeln!(f, "\nFunction Call Tree:")?;
+                for index in self.function_call_list.keys() {
+                    if let Some(name) = self.exported_functions.get(index) {
+                        self.print_call_tree(index, name, f)?;
+                    }
+                }
+                writeln!(f, "Uncalled Functions:")?;
+                let mut all_functions: Vec<usize> = (0..self.function_count)
+                    .map(|e| e as usize ).collect();
+                let called_functions = self.function_call_list.keys().cloned().collect::<Vec<usize>>();
+                all_functions.retain(|e| {
+                    !called_functions.contains(&e)
+                });
+                if !all_functions.is_empty() {
+                    writeln!(f, "{:?}", all_functions)?;
+                }
             }
 
             if self.include_operators {
@@ -191,7 +257,9 @@ impl fmt::Display for Analysis {
 pub fn analyze(source: &Path,
                include_sections: bool,
                include_functions: bool,
-               include_operators: bool) -> Result<Analysis> {
+               include_operators: bool,
+               include_function_call_tree: bool,
+) -> Result<Analysis> {
     let f = File::open(source)?;
     let mut reader = BufReader::new(f);
     let mut buf = Vec::new();
@@ -207,7 +275,10 @@ pub fn analyze(source: &Path,
         include_functions,
         function_count: 0,
         exported_functions_count: 0,
-        exported_functions: vec!(),
+        exported_functions: HashMap::<usize, String>::new(),
+
+        include_function_call_tree,
+        function_call_list: HashMap::<usize, Vec<usize>>::new(),
 
         include_sections,
         sections: Vec::new(),
@@ -218,6 +289,8 @@ pub fn analyze(source: &Path,
         sorted_operator_usage: vec!(),
         operator_count: 0,
     };
+
+    let mut function_index = 0;
 
     loop {
         let (payload, consumed) = match parser.parse(&buf, eof)? {
@@ -248,7 +321,10 @@ pub fn analyze(source: &Path,
             // individually.
             CodeSectionStart { count, range, size } =>
                 analysis.add_section("CodeSectionStart", Some(count), &range)?,
-            CodeSectionEntry(function_body) => analysis.add_function(&function_body)?,
+            CodeSectionEntry(function_body) => {
+                analysis.add_function(&function_body, function_index)?;
+                function_index += 1;
+            },
             ComponentSection { parser, range } =>
                 analysis.add_section("ComponentSection", None, &range)?,
             ComponentInstanceSection(section) =>
@@ -323,6 +399,12 @@ pub fn analyze(source: &Path,
         buf.drain(..consumed);
 
         // analyze function call graph (if requested) starting at "exported" entry points
+        /*
+                if let Some(name) = self.exported_functions.get(&index) {
+            println!("Analyzing exported function: {} with index {}", name, index);
+        }
+
+         */
     }
 
     // order the operator usage
