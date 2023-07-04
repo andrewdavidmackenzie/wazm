@@ -7,6 +7,9 @@ use std::collections::HashMap;
 use wasmparser::{Parser, Chunk, FunctionBody, Payload::*};
 use wasmparser::ExportSectionReader;
 use wasmparser::ExternalKind;
+use wasmparser::ElementSectionReader;
+use wasmparser::ElementItems::*;
+use wasmparser::RefType;
 use wasmparser::Operator;
 use core::ops::Range;
 use std::fmt;
@@ -61,8 +64,8 @@ pub struct Analysis {
     exported_functions: HashMap<usize, String>,
 
     include_function_call_tree: bool,
-    function_call_list: HashMap<usize, Vec<usize>>, // index of caller --> vector of indexes called
-
+    static_functions_called: HashMap<usize, Vec<usize>>, // index of caller --> vector of indexes called
+    dynamic_dispatch_functions: Vec<usize>,
     include_sections: bool,
     sections: Vec<Section>,
     sections_size_total: usize,
@@ -74,6 +77,30 @@ pub struct Analysis {
 }
 
 impl Analysis {
+    fn add_elements(&mut self, elements_reader: ElementSectionReader)
+                 -> Result<()> {
+        self.add_section("ElementSection", Some(elements_reader.count()), &elements_reader.range())?;
+
+        for element in elements_reader.clone().into_iter() {
+            if let Ok(el) = element {
+                if el.ty == RefType::FUNCREF || el.ty == RefType::FUNC {
+                    match el.items {
+                        Functions(section) => {
+                            self.dynamic_dispatch_functions = section.into_iter()
+                                .map(|e| e.unwrap() as usize)
+                                .collect::<Vec<usize>>();
+                            self.dynamic_dispatch_functions.sort();
+                            self.dynamic_dispatch_functions.dedup();
+                        },
+                        _ => {},
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn add_section(&mut self, section_type: &str, item_count: Option<u32>, range: &Range<usize>)
     -> Result<()> {
         if self.include_sections {
@@ -106,12 +133,10 @@ impl Analysis {
     }
 
     fn add_function_call(&mut self, caller_index: usize, function_index: u32) {
-        if self.include_function_call_tree {
-            let called_index = function_index as usize;
-            self.function_call_list.entry(caller_index)
-                .and_modify(|v| { if !v.contains(&called_index) { v.push(called_index) } })
-                .or_insert(vec!());
-        }
+        let called_index = function_index as usize;
+        self.static_functions_called.entry(caller_index)
+            .and_modify(|v| { if !v.contains(&called_index) { v.push(called_index) } })
+            .or_insert(vec!());
     }
 
     fn add_function(&mut self, function_body: &FunctionBody, index: usize) -> Result<()> {
@@ -119,13 +144,11 @@ impl Analysis {
             return Ok(());
         }
 
-        let mut found_return = false;
         let mut reader = function_body.get_operators_reader()?;
         while !reader.eof() {
             let operator = reader.read()?;
 
             match operator {
-                Operator::Return => found_return = true,
                 Operator::Call{function_index} => self.add_function_call(index, function_index),
                 _ => {}
             }
@@ -138,10 +161,6 @@ impl Analysis {
                     .or_insert(1);
                 self.operator_count += 1;
             }
-        }
-
-        if !found_return {
-           // TODO println!("Function did not contain Return");
         }
 
         self.function_count += 1;
@@ -166,7 +185,7 @@ impl Analysis {
 
     fn print_called_list(&self, call_chain: Vec<usize>, f: &mut fmt::Formatter) -> fmt::Result {
         let index = call_chain.last().unwrap_or(&1);
-        if let Some(called_list) = self.function_call_list.get(index) {
+        if let Some(called_list) = self.static_functions_called.get(index) {
             let level = call_chain.len();
             for called in called_list {
                 if call_chain.contains(called) {
@@ -219,22 +238,41 @@ impl fmt::Display for Analysis {
                 writeln!(f, "\t Exported Function: {:#5} '{}'", function_index, export_name)?;
             }
 
+            let mut called_functions = self.static_functions_called.keys().cloned()
+                .collect::<Vec<usize>>();
+            called_functions.sort();
+            if !called_functions.is_empty() {
+                writeln!(f, "\nStatically Called Functions ({}): {:?}",
+                         called_functions.len(), called_functions)?;
+            }
+
+            if !self.dynamic_dispatch_functions.is_empty() {
+                let mut dynamic = self.dynamic_dispatch_functions.clone();
+                dynamic.sort();
+                writeln!(f, "\nDynamic Dispatch Functions ({}): {:?}",
+                         dynamic.len(), dynamic)?;
+            }
+
+            let mut all_functions: Vec<usize> = (0..self.function_count)
+                .map(|e| e as usize ).collect();
+            all_functions.retain(|e| {
+                !called_functions.contains(&e)
+            });
+            all_functions.retain(|e| {
+                !self.dynamic_dispatch_functions.contains(&e)
+            });
+            if !all_functions.is_empty() {
+                all_functions.sort();
+                writeln!(f, "\nUncalled Functions ({}):", all_functions.len())?;
+                writeln!(f, "{:?}", all_functions)?;
+            }
+
             if self.include_function_call_tree {
                 writeln!(f, "\nFunction Call Tree:")?;
-                for index in self.function_call_list.keys() {
+                for index in self.static_functions_called.keys() {
                     if let Some(name) = self.exported_functions.get(index) {
                         self.print_call_tree(index, name, f)?;
                     }
-                }
-                writeln!(f, "Uncalled Functions:")?;
-                let mut all_functions: Vec<usize> = (0..self.function_count)
-                    .map(|e| e as usize ).collect();
-                let called_functions = self.function_call_list.keys().cloned().collect::<Vec<usize>>();
-                all_functions.retain(|e| {
-                    !called_functions.contains(&e)
-                });
-                if !all_functions.is_empty() {
-                    writeln!(f, "{:?}", all_functions)?;
                 }
             }
 
@@ -278,7 +316,8 @@ pub fn analyze(source: &Path,
         exported_functions: HashMap::<usize, String>::new(),
 
         include_function_call_tree,
-        function_call_list: HashMap::<usize, Vec<usize>>::new(),
+        static_functions_called: HashMap::<usize, Vec<usize>>::new(),
+        dynamic_dispatch_functions: vec!(),
 
         include_sections,
         sections: Vec::new(),
@@ -349,8 +388,7 @@ pub fn analyze(source: &Path,
                 analysis.add_section("DataCountSection", Some(count), &range)?,
             DataSection(section) =>
                 analysis.add_section("DataSection", Some(section.count()), &section.range())?,
-            ElementSection(section) =>
-                analysis.add_section("ElementSection", Some(section.count()), &section.range())?,
+            ElementSection(section) => analysis.add_elements(section)?,
             ExportSection(section) => {
                 analysis.add_section("ExportSection", Some(section.count()), &section.range())?;
                 analysis.add_exports(&section)?;
