@@ -16,7 +16,7 @@ use std::fmt;
 use std::collections::BTreeMap;
 use leb128;
 
-struct Section {
+pub struct Section {
     section_type: String,
     header_location: usize,
     item_count: Option<u32>,
@@ -54,26 +54,26 @@ impl fmt::Display for Section {
 
 /// Analysis results of a wasm file
 pub struct Analysis {
-    source: String,
-    version: u16,
-    file_size: u64,
+    pub source: String,
+    pub version: u16,
+    pub file_size: u64,
 
-    include_functions: bool,
-    function_count: u64,
-    exported_functions_count: u32,
-    exported_functions: HashMap<usize, String>,
+    pub include_functions: bool,
+    pub function_count: u64,
+    pub exported_functions_count: u32,
+    pub exported_functions: HashMap<usize, String>,
 
-    include_function_call_tree: bool,
-    static_functions_called: HashMap<usize, Vec<usize>>, // index of caller --> vector of indexes called
-    dynamic_dispatch_functions: Vec<usize>,
-    include_sections: bool,
-    sections: Vec<Section>,
-    sections_size_total: usize,
+    pub include_function_call_tree: bool,
+    pub static_functions_called: HashMap<usize, Vec<usize>>, // index of caller --> vector of indexes called
+    pub dynamic_dispatch_functions: Vec<usize>,
+    pub include_sections: bool,
+    pub sections: Vec<Section>,
+    pub sections_size_total: usize,
 
-    include_operators: bool,
-    operator_usage: BTreeMap<String, u64>,
-    sorted_operator_usage: Vec<(String, u64)>,
-    operator_count: u64,
+    pub include_operators: bool,
+    pub operator_usage: BTreeMap<String, u64>,
+    pub sorted_operator_usage: Vec<(String, u64)>,
+    pub operator_count: u64,
 }
 
 impl Analysis {
@@ -444,4 +444,35 @@ pub fn analyze(source: &Path,
     analysis.sorted_operator_usage = vec;
 
     Ok(analysis)
+}
+
+#[cfg(test)]
+mod test {
+    use std::fs;
+    use std::process::Command;
+    use std::path::PathBuf;
+
+    fn test_file(test_file_name: &str) -> PathBuf {
+        let source = PathBuf::from(&format!("{}/tests/test_files/{}",
+                                            env!("CARGO_MANIFEST_DIR"),
+        test_file_name));
+        let mut wasm = source.clone();
+        wasm.set_extension("wasm");
+        let _ = fs::remove_file(&wasm);
+        let mut compiler = Command::new("wat2wasm");
+        compiler.arg(source);
+        compiler.arg("-o");
+        compiler.arg(&wasm);
+        compiler.output().expect("wat2wasm compile failed");
+        wasm
+    }
+
+    #[test]
+    fn test_analyze_hello_web() {
+        let wasm = test_file("hello_web.wat");
+        let analysis = super::analyze(&wasm, true, true, true, true)
+            .expect("Analysis of wasm file failed");
+        assert_eq!(analysis.version, 1);
+        assert_eq!(analysis.function_count, 1);
+    }
 }
