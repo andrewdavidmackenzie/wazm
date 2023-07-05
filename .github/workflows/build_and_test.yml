@@ -37,8 +37,13 @@ jobs:
       - name: build
         run: cargo build
 
-      - name: InstallWasmTools
+      - name: InstallWasmTools - mac
+        if: matrix.os == 'macos-latest'
         run: brew install wabt
+
+      - name: InstallWasmTools - linux
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get -y install wabt
 
       - name: test
         run: cargo test
