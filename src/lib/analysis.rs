@@ -6,9 +6,11 @@ use std::io::Read;
 use std::collections::HashMap;
 use wasmparser::{Parser, Chunk, FunctionBody, Payload::*};
 use wasmparser::ExportSectionReader;
+use wasmparser::ImportSectionReader;
 use wasmparser::ExternalKind;
 use wasmparser::ElementSectionReader;
 use wasmparser::ElementItems::*;
+use wasmparser::TypeRef;
 use wasmparser::RefType;
 use wasmparser::Operator;
 use core::ops::Range;
@@ -59,12 +61,12 @@ pub struct Analysis {
     pub file_size: u64,
 
     pub include_functions: bool,
-    pub function_count: u64,
-    pub exported_functions_count: u32,
-    pub exported_functions: HashMap<usize, String>,
+    pub implemented_function_count: u64,
+    pub imported_functions: BTreeMap<usize, String>,
+    pub exported_functions: BTreeMap<usize, String>,
 
     pub include_function_call_tree: bool,
-    pub static_functions_called: HashMap<usize, Vec<usize>>, // index of caller --> vector of indexes called
+    pub static_function_calls: HashMap<usize, Vec<usize>>, // index of caller --> vector of indexes called
     pub dynamic_dispatch_functions: Vec<usize>,
     pub include_sections: bool,
     pub sections: Vec<Section>,
@@ -127,9 +129,8 @@ impl Analysis {
         Ok(())
     }
 
-    fn add_function_call(&mut self, caller_index: usize, function_index: u32) {
-        let called_index = function_index as usize;
-        self.static_functions_called.entry(caller_index)
+    fn add_function_call(&mut self, caller_index: usize, called_index: usize) {
+        self.static_function_calls.entry(caller_index)
             .and_modify(|v| { if !v.contains(&called_index) { v.push(called_index) } })
             .or_insert(vec!());
     }
@@ -144,7 +145,7 @@ impl Analysis {
             let operator = reader.read()?;
 
             if let Operator::Call{function_index} = operator {
-                self.add_function_call(index, function_index);
+                self.add_function_call(index, function_index as usize);
             }
 
             if self.include_operators {
@@ -157,7 +158,7 @@ impl Analysis {
             }
         }
 
-        self.function_count += 1;
+        self.implemented_function_count += 1;
 
         Ok(())
     }
@@ -169,7 +170,21 @@ impl Analysis {
             for export in reader.clone().into_iter().flatten() {
                 if export.kind == ExternalKind::Func {
                     self.exported_functions.insert(export.index as usize, export.name.to_owned());
-                    self.exported_functions_count += 1;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn add_imports(&mut self, reader: &ImportSectionReader, function_index: &mut usize) -> Result<()> {
+        self.add_section("ImportSection", Some(reader.count()), &reader.range())?;
+
+        if self.include_functions {
+            for import in reader.clone().into_iter().flatten() {
+                if matches!(import.ty, TypeRef::Func(_)) {
+                    self.imported_functions.insert(*function_index, import.name.to_owned());
+                    *function_index += 1;
                 }
             }
         }
@@ -179,7 +194,7 @@ impl Analysis {
 
     fn print_called_list(&self, call_chain: Vec<usize>, f: &mut fmt::Formatter) -> fmt::Result {
         let index = call_chain.last().unwrap_or(&1);
-        if let Some(called_list) = self.static_functions_called.get(index) {
+        if let Some(called_list) = self.static_function_calls.get(index) {
             let level = call_chain.len();
             for called in called_list {
                 if call_chain.contains(called) {
@@ -224,16 +239,23 @@ impl fmt::Display for Analysis {
 
         if self.include_functions {
             writeln!(f, "\nFunctions:")?;
-            writeln!(f, "Function Count: {}", self.function_count)?;
-            writeln!(f, "Exported Function Count: {}", self.exported_functions_count)?;
+            writeln!(f, "Imported Functions ({}):", self.imported_functions.len())?;
+            for (function_index, import_name) in &self.imported_functions {
+                writeln!(f, " {:#5} '{}'", function_index, import_name)?;
+            }
+            writeln!(f, "Implemented Functions ({}):", self.implemented_function_count)?;
+            writeln!(f, "Exported Functions ({}):", self.exported_functions.len())?;
 
             for (function_index, export_name) in &self.exported_functions {
-                writeln!(f, "\t Exported Function: {:#5} '{}'", function_index, export_name)?;
+                writeln!(f, " {:#5} '{}'", function_index, export_name)?;
             }
 
-            let mut called_functions = self.static_functions_called.keys().cloned()
-                .collect::<Vec<usize>>();
+            let mut called_functions = vec!();
+            for called_list in self.static_function_calls.values() {
+                called_functions.extend(called_list);
+            }
             called_functions.sort();
+            called_functions.dedup();
             if !called_functions.is_empty() {
                 writeln!(f, "\nStatically Called Functions ({}): {:?}",
                          called_functions.len(), called_functions)?;
@@ -246,11 +268,21 @@ impl fmt::Display for Analysis {
                          dynamic.len(), dynamic)?;
             }
 
-            let mut all_functions: Vec<usize> = (0..self.function_count)
+            let mut all_functions: Vec<usize> = (0..self.implemented_function_count)
                 .map(|e| e as usize ).collect();
+            // Remove all functions that have been called by others
             all_functions.retain(|e| {
                 !called_functions.contains(e)
             });
+            // Remove all imported functions
+            all_functions.retain(|e| {
+                !self.imported_functions.contains_key(e)
+            });
+            // Remove all exported functions
+            all_functions.retain(|e| {
+                !self.exported_functions.contains_key(e)
+            });
+            // Remove functions that maybe called dynamically at runtime via a table
             all_functions.retain(|e| {
                 !self.dynamic_dispatch_functions.contains(e)
             });
@@ -262,7 +294,7 @@ impl fmt::Display for Analysis {
 
             if self.include_function_call_tree {
                 writeln!(f, "\nFunction Call Tree:")?;
-                for index in self.static_functions_called.keys() {
+                for index in self.static_function_calls.keys() {
                     if let Some(name) = self.exported_functions.get(index) {
                         self.print_call_tree(index, name, f)?;
                     }
@@ -304,12 +336,12 @@ pub fn analyze(source: &Path,
         version: 0,
 
         include_functions,
-        function_count: 0,
-        exported_functions_count: 0,
-        exported_functions: HashMap::<usize, String>::new(),
+        implemented_function_count: 0,
+        imported_functions: BTreeMap::<usize, String>::new(),
+        exported_functions: BTreeMap::<usize, String>::new(),
 
         include_function_call_tree,
-        static_functions_called: HashMap::<usize, Vec<usize>>::new(),
+        static_function_calls: HashMap::<usize, Vec<usize>>::new(),
         dynamic_dispatch_functions: vec!(),
 
         include_sections,
@@ -387,8 +419,7 @@ pub fn analyze(source: &Path,
                 analysis.add_section("FunctionSection", Some(section.count()), &section.range())?,
             GlobalSection(section) =>
                 analysis.add_section("GlobalSection", Some(section.count()), &section.range())?,
-            ImportSection(section) =>
-                analysis.add_section("ImportSection", Some(section.count()), &section.range())?,
+            ImportSection(section) => analysis.add_imports(&section, &mut function_index)?,
             InstanceSection(section) =>
                 analysis.add_section("InstanceSection", Some(section.count()), &section.range())?,
             MemorySection(section) =>
@@ -463,7 +494,8 @@ mod test {
         let analysis = super::analyze(&wasm, true, true, true, true)
             .expect("Analysis of wasm file failed");
         assert_eq!(analysis.version, 1);
-        assert_eq!(analysis.function_count, 1);
+        assert_eq!(analysis.exported_functions.len(), 1);
+        assert_eq!(analysis.implemented_function_count, 2);
         let _ = fs::remove_file(&wasm);
     }
 }

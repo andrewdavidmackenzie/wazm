@@ -12,4 +12,11 @@
         i32.const 29  ;; pass length 29 to log (strlen of sample text)
         call  $log
         )
+
+    ;; Function declaration: bye(), no arguments
+    (func
+        i32.const 0  ;; pass offset 0 to log
+        i32.const 29  ;; pass length 29 to log (strlen of sample text)
+        call  $log
+        )
 )
