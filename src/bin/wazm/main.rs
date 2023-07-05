@@ -57,16 +57,14 @@ fn run(matches: ArgMatches) -> Result<()> {
                                      matches.get_flag("analyze-call-tree"),
         )?;
         println!("{}", analysis);
+    } else if source.extension() == Some("wasm".as_ref()) {
+        let destination_filename = format!("{source_filename}.wz");
+        let destination = Path::new(&destination_filename);
+        wazm::compress(source, destination)?;
     } else {
-        if source.extension() == Some("wasm".as_ref()) {
-            let destination_filename = format!("{source_filename}.wz");
-            let destination = Path::new(&destination_filename);
-            wazm::compress(source, destination)?;
-        } else {
-            let destination_filename = source.with_extension("");
-            let destination = Path::new(&destination_filename);
-            wazm::decompress(source, destination)?;
-        }
+        let destination_filename = source.with_extension("");
+        let destination = Path::new(&destination_filename);
+        wazm::decompress(source, destination)?;
     }
 
     Ok(())
