@@ -474,5 +474,6 @@ mod test {
             .expect("Analysis of wasm file failed");
         assert_eq!(analysis.version, 1);
         assert_eq!(analysis.function_count, 1);
+        let _ = fs::remove_file(&wasm);
     }
 }
