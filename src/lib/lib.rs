@@ -1,16 +1,15 @@
-use std::path::Path;
-use errors::*;
-
 /// A module with error types
 pub mod errors;
 
-// A module for analyzing a wasm file
+/// A module for analyzing a wasm file
 pub mod analysis;
 
-pub use analysis::analyze;
+/// A Module for compressing ".wasm" files into ".wz"
+pub mod compress;
 
-/// Compress file at `source`into a new file at `destination`
-/// Return a Result with the size of the output file in bytes
-pub fn compress(source: &Path, destination: &Path) -> Result<u64> {
-    std::fs::copy(source, destination).chain_err(|| "Could not compress")
-}
+/// A Module for decompressing ".wz" files into ".wasm"
+pub mod decompress;
+
+pub use analysis::analyze;
+pub use compress::compress;
+pub use decompress::decompress;

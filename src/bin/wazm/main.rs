@@ -44,6 +44,10 @@ fn run(matches: ArgMatches) -> Result<()> {
     if !source.exists() {
         bail!("File '{}' does not exist", source_filename);
     }
+    if source.extension() != Some("wasm".as_ref()) &&
+        source.extension() != Some("wz".as_ref()) {
+        bail!("File '{}' does not have a .wasm nor .wz extension", source_filename);
+    }
 
     if matches.get_flag("analyze") {
         let analysis = wazm::analyze(source,
@@ -54,9 +58,15 @@ fn run(matches: ArgMatches) -> Result<()> {
         )?;
         println!("{}", analysis);
     } else {
-        let destination_filename = format!("{source_filename}.wz");
-        let destination = Path::new(&destination_filename);
-        wazm::compress(source, destination)?;
+        if source.extension() == Some("wasm".as_ref()) {
+            let destination_filename = format!("{source_filename}.wz");
+            let destination = Path::new(&destination_filename);
+            wazm::compress(source, destination)?;
+        } else {
+            let destination_filename = source.with_extension("");
+            let destination = Path::new(&destination_filename);
+            wazm::decompress(source, destination)?;
+        }
     }
 
     Ok(())
@@ -106,5 +116,7 @@ fn get_matches() -> ArgMatches {
             .num_args(1)
             .help("the file path of the wasm file to compress/decompress"));
 
+    // TODO add an option to validate contents are equivalent after compressing by
+    // decompressing, parsing and then comparing
     app.get_matches()
 }

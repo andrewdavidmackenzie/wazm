@@ -6,7 +6,7 @@ use std::fs;
 const TOOL_LIST : [(&str, &str); 2] = [("wazm", "wz"), ("gzip", "gz")];
 
 #[test]
-fn test() {
+fn compression() {
     let test_files_dir = PathBuf::from("tests/test_files");
     let test_output_dir = PathBuf::from("tests/test_output");
     let _ = std::fs::remove_dir_all(&test_output_dir);
@@ -24,17 +24,18 @@ fn test() {
         println!("{} {}", path.file_name().unwrap().to_string_lossy(), original_size);
 
         for (tool, extension) in TOOL_LIST {
-            let mut test_output_file = test_output_dir.clone();
-            test_output_file.push(path.file_name().unwrap());
-            fs::copy(path, &test_output_file).unwrap();
+            let mut test_input_file = test_output_dir.clone();
+            test_input_file.push(path.file_name().unwrap());
+            fs::copy(path, &test_input_file).unwrap();
             assert!(Command::new(tool)
                         .env("PATH", extended_path)
-                        .arg(&test_output_file)
+                        .arg(&test_input_file)
                         .status().unwrap()
                         .success(), "Could not run tool");
-            let output = format!("{}.{}", test_output_file.display(), extension);
+            let output = format!("{}.{}", test_input_file.display(), extension);
             let output_path = PathBuf::from(output);
-            let new_size = output_path.metadata().unwrap().len();
+            let new_size = output_path.metadata()
+                .expect("Could not get file metadata").len();
             println!("{tool} {new_size} {}%", (new_size * 100) / original_size);
         }
     }
