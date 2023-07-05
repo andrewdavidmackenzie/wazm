@@ -81,19 +81,14 @@ impl Analysis {
                  -> Result<()> {
         self.add_section("ElementSection", Some(elements_reader.count()), &elements_reader.range())?;
 
-        for element in elements_reader.clone().into_iter() {
-            if let Ok(el) = element {
-                if el.ty == RefType::FUNCREF || el.ty == RefType::FUNC {
-                    match el.items {
-                        Functions(section) => {
-                            self.dynamic_dispatch_functions = section.into_iter()
-                                .map(|e| e.unwrap() as usize)
-                                .collect::<Vec<usize>>();
-                            self.dynamic_dispatch_functions.sort();
-                            self.dynamic_dispatch_functions.dedup();
-                        },
-                        _ => {},
-                    }
+        for element in elements_reader.clone().into_iter().flatten() {
+            if element.ty == RefType::FUNCREF || element.ty == RefType::FUNC {
+                if let Functions(section) = element.items {
+                    self.dynamic_dispatch_functions = section.into_iter()
+                        .map(|e| e.unwrap() as usize)
+                        .collect::<Vec<usize>>();
+                    self.dynamic_dispatch_functions.sort();
+                    self.dynamic_dispatch_functions.dedup();
                 }
             }
         }
@@ -148,9 +143,8 @@ impl Analysis {
         while !reader.eof() {
             let operator = reader.read()?;
 
-            match operator {
-                Operator::Call{function_index} => self.add_function_call(index, function_index),
-                _ => {}
+            if let Operator::Call{function_index} = operator {
+                self.add_function_call(index, function_index);
             }
 
             if self.include_operators {
@@ -170,12 +164,10 @@ impl Analysis {
 
     fn add_exports(&mut self, reader: &ExportSectionReader) -> Result<()> {
         if self.include_functions {
-            for export in reader.clone().into_iter() {
-                if let Ok(ex) = export {
-                    if ex.kind == ExternalKind::Func {
-                        self.exported_functions.insert(ex.index as usize, ex.name.to_owned());
-                        self.exported_functions_count += 1;
-                    }
+            for export in reader.clone().into_iter().flatten() {
+                if export.kind == ExternalKind::Func {
+                    self.exported_functions.insert(export.index as usize, export.name.to_owned());
+                    self.exported_functions_count += 1;
                 }
             }
         }
@@ -204,7 +196,7 @@ impl Analysis {
     fn print_call_tree(&self, root_index: &usize, name: &str, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "\t#{} '{}'", root_index, name)?;
         self.print_called_list(vec!(*root_index), f)?;
-        writeln!(f, "")
+        writeln!(f)
     }
 }
 
@@ -256,10 +248,10 @@ impl fmt::Display for Analysis {
             let mut all_functions: Vec<usize> = (0..self.function_count)
                 .map(|e| e as usize ).collect();
             all_functions.retain(|e| {
-                !called_functions.contains(&e)
+                !called_functions.contains(e)
             });
             all_functions.retain(|e| {
-                !self.dynamic_dispatch_functions.contains(&e)
+                !self.dynamic_dispatch_functions.contains(e)
             });
             if !all_functions.is_empty() {
                 all_functions.sort();

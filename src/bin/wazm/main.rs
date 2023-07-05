@@ -46,7 +46,7 @@ fn run(matches: ArgMatches) -> Result<()> {
     }
 
     if matches.get_flag("analyze") {
-        let analysis = wazm::analyze(&source,
+        let analysis = wazm::analyze(source,
                                      matches.get_flag("analyze-sections"),
                                      matches.get_flag("analyze-functions"),
                                      matches.get_flag("analyze-operators"),
@@ -56,7 +56,7 @@ fn run(matches: ArgMatches) -> Result<()> {
     } else {
         let destination_filename = format!("{source_filename}.wz");
         let destination = Path::new(&destination_filename);
-        wazm::compress(&source, &destination)?;
+        wazm::compress(source, destination)?;
     }
 
     Ok(())

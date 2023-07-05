@@ -1,0 +1,41 @@
+name: Build and Test with Coverage
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  schedule: # Build every day at 5PM UTC
+    - cron: '0 17 * * *'
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build-and-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ macos-latest, ubuntu-latest ]
+        rust: [ stable ]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install clippy
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: clippy
+
+      - name: clippy
+        run: cargo clippy --tests -- -D warnings
+
+      - name: build
+        run: cargo build
+
+      - name: test
+        run: cargo test
