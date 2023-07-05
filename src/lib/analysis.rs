@@ -163,6 +163,8 @@ impl Analysis {
     }
 
     fn add_exports(&mut self, reader: &ExportSectionReader) -> Result<()> {
+        self.add_section("ExportSection", Some(reader.count()), &reader.range())?;
+
         if self.include_functions {
             for export in reader.clone().into_iter().flatten() {
                 if export.kind == ExternalKind::Func {
@@ -202,7 +204,6 @@ impl Analysis {
 
 impl fmt::Display for Analysis {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "File Stats:")?;
         writeln!(f, "WASM File: {}", self.source)?;
         writeln!(f, "WASM Version: {}", self.version)?;
         writeln!(f, "File Size: {}", self.file_size)?;
@@ -381,10 +382,7 @@ pub fn analyze(source: &Path,
             DataSection(section) =>
                 analysis.add_section("DataSection", Some(section.count()), &section.range())?,
             ElementSection(section) => analysis.add_elements(section)?,
-            ExportSection(section) => {
-                analysis.add_section("ExportSection", Some(section.count()), &section.range())?;
-                analysis.add_exports(&section)?;
-            }
+            ExportSection(section) => analysis.add_exports(&section)?,
             FunctionSection(section) =>
                 analysis.add_section("FunctionSection", Some(section.count()), &section.range())?,
             GlobalSection(section) =>
@@ -427,14 +425,6 @@ pub fn analyze(source: &Path,
         // once we're done processing the payload we can forget the
         // original.
         buf.drain(..consumed);
-
-        // analyze function call graph (if requested) starting at "exported" entry points
-        /*
-                if let Some(name) = self.exported_functions.get(&index) {
-            println!("Analyzing exported function: {} with index {}", name, index);
-        }
-
-         */
     }
 
     // order the operator usage
