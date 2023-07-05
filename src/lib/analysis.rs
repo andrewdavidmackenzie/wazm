@@ -1,10 +1,7 @@
 use std::path::Path;
-use std::fs::File;
-use std::io::BufReader;
 use crate::errors::*;
-use std::io::Read;
 use std::collections::HashMap;
-use wasmparser::{Parser, Chunk, FunctionBody, Payload::*};
+use wasmparser::{Parser, FunctionBody, Payload::*};
 use wasmparser::ExportSectionReader;
 use wasmparser::ImportSectionReader;
 use wasmparser::ExternalKind;
@@ -332,12 +329,6 @@ pub fn analyze(source: &Path,
                include_operators: bool,
                include_function_call_tree: bool,
 ) -> Result<Analysis> {
-    let f = File::open(source)?;
-    let mut reader = BufReader::new(f);
-    let mut buf = Vec::new();
-    let mut eof = false;
-    let mut stack = Vec::new();
-
     let mut analysis = Analysis {
         source: source.canonicalize()?.display().to_string(),
         file_size: source.metadata()?.len(),
@@ -347,44 +338,12 @@ pub fn analyze(source: &Path,
         include_function_call_tree,
         ..Default::default() };
 
-
     let mut function_index = 0;
-    let mut parser = Parser::new(0);
 
-    loop {
-        let (section, consumed) = match parser.parse(&buf, eof)? {
-            Chunk::NeedMoreData(hint) => {
-                assert!(!eof); // otherwise an error would be returned
-
-                // Use the hint to preallocate more space, then read
-                // some more data into our buffer.
-                //
-                // Note that the buffer management here is not ideal,
-                // but it's compact enough to fit in an example!
-                let len = buf.len();
-                buf.extend((0..hint).map(|_| 0u8));
-                let n = reader.read(&mut buf[len..])?;
-                buf.truncate(len + n);
-                eof = n == 0;
-                continue;
-            }
-
-            Chunk::Parsed { consumed, payload } => (payload, consumed),
-        };
-
+    let buf: Vec<u8> = std::fs::read(source)?;
+    for payload in Parser::new(0).parse_all(&buf) {
         #[allow(unused_variables)]
-        match section {
-            // Once we've reached the end of a parser we either resume
-            // at the parent parser or we break out of the loop because
-            // we're done.
-            End(_) => {
-                if let Some(parent_parser) = stack.pop() {
-                    parser = parent_parser;
-                } else {
-                    break;
-                }
-            }
-
+        match payload? {
             // Here we know how many functions we'll be receiving as
             // `CodeSectionEntry`, so we can prepare for that, and
             // afterwards we can parse and handle each function
@@ -446,10 +405,8 @@ pub fn analyze(source: &Path,
                 analysis.version = num;
                 analysis.add_section("Magic & Version", None, &range)?;
             }
+            End(_) => {}
         }
-
-        // once we're done processing the payload we can forget the original
-        buf.drain(..consumed);
     }
 
     analysis.post_process();
