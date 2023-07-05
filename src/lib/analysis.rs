@@ -55,6 +55,7 @@ impl fmt::Display for Section {
 }
 
 /// Analysis results of a wasm file
+#[derive(Default)]
 pub struct Analysis {
     pub source: String,
     pub version: u16,
@@ -192,6 +193,14 @@ impl Analysis {
         Ok(())
     }
 
+    fn post_process(&mut self) {
+        // order the operator usage
+        let mut vec: Vec<(String, u64)> = self.operator_usage.iter()
+            .map(|(s, c)| (s.to_string(), *c)).collect();
+        vec.sort_by(|a, b| b.1.cmp(&a.1));
+        self.sorted_operator_usage = vec;
+    }
+
     fn print_called_list(&self, call_chain: Vec<usize>, f: &mut fmt::Formatter) -> fmt::Result {
         let index = call_chain.last().unwrap_or(&1);
         if let Some(called_list) = self.static_function_calls.get(index) {
@@ -326,38 +335,24 @@ pub fn analyze(source: &Path,
     let f = File::open(source)?;
     let mut reader = BufReader::new(f);
     let mut buf = Vec::new();
-    let mut parser = Parser::new(0);
     let mut eof = false;
     let mut stack = Vec::new();
 
     let mut analysis = Analysis {
         source: source.canonicalize()?.display().to_string(),
         file_size: source.metadata()?.len(),
-        version: 0,
-
-        include_functions,
-        implemented_function_count: 0,
-        imported_functions: BTreeMap::<usize, String>::new(),
-        exported_functions: BTreeMap::<usize, String>::new(),
-
-        include_function_call_tree,
-        static_function_calls: HashMap::<usize, Vec<usize>>::new(),
-        dynamic_dispatch_functions: vec!(),
-
         include_sections,
-        sections: Vec::new(),
-        sections_size_total: 0,
-
+        include_functions,
         include_operators,
-        operator_usage: BTreeMap::<String, u64>::new(),
-        sorted_operator_usage: vec!(),
-        operator_count: 0,
-    };
+        include_function_call_tree,
+        ..Default::default() };
+
 
     let mut function_index = 0;
+    let mut parser = Parser::new(0);
 
     loop {
-        let (payload, consumed) = match parser.parse(&buf, eof)? {
+        let (section, consumed) = match parser.parse(&buf, eof)? {
             Chunk::NeedMoreData(hint) => {
                 assert!(!eof); // otherwise an error would be returned
 
@@ -378,7 +373,18 @@ pub fn analyze(source: &Path,
         };
 
         #[allow(unused_variables)]
-        match payload {
+        match section {
+            // Once we've reached the end of a parser we either resume
+            // at the parent parser or we break out of the loop because
+            // we're done.
+            End(_) => {
+                if let Some(parent_parser) = stack.pop() {
+                    parser = parent_parser;
+                } else {
+                    break;
+                }
+            }
+
             // Here we know how many functions we'll be receiving as
             // `CodeSectionEntry`, so we can prepare for that, and
             // afterwards we can parse and handle each function
@@ -440,29 +446,13 @@ pub fn analyze(source: &Path,
                 analysis.version = num;
                 analysis.add_section("Magic & Version", None, &range)?;
             }
-
-            // Once we've reached the end of a parser we either resume
-            // at the parent parser or we break out of the loop because
-            // we're done.
-            End(_) => {
-                if let Some(parent_parser) = stack.pop() {
-                    parser = parent_parser;
-                } else {
-                    break;
-                }
-            }
         }
 
-        // once we're done processing the payload we can forget the
-        // original.
+        // once we're done processing the payload we can forget the original
         buf.drain(..consumed);
     }
 
-    // order the operator usage
-    let mut vec: Vec<(String, u64)> = analysis.operator_usage.iter()
-        .map(|(s, c)| (s.to_string(), *c)).collect();
-    vec.sort_by(|a, b| b.1.cmp(&a.1));
-    analysis.sorted_operator_usage = vec;
+    analysis.post_process();
 
     Ok(analysis)
 }
