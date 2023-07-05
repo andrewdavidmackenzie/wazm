@@ -133,7 +133,7 @@ impl Analysis {
             .or_insert(vec!());
     }
 
-    fn add_function(&mut self, function_body: &FunctionBody, index: usize) -> Result<()> {
+    fn add_function(&mut self, function_body: &FunctionBody, index: &mut usize) -> Result<()> {
         if !self.include_functions {
             return Ok(());
         }
@@ -143,7 +143,7 @@ impl Analysis {
             let operator = reader.read()?;
 
             if let Operator::Call{function_index} = operator {
-                self.add_function_call(index, function_index as usize);
+                self.add_function_call(*index, function_index as usize);
             }
 
             if self.include_operators {
@@ -157,6 +157,8 @@ impl Analysis {
         }
 
         self.implemented_function_count += 1;
+
+        *index += 1;
 
         Ok(())
     }
@@ -344,16 +346,10 @@ pub fn analyze(source: &Path,
     for payload in Parser::new(0).parse_all(&buf) {
         #[allow(unused_variables)]
         match payload? {
-            // Here we know how many functions we'll be receiving as
-            // `CodeSectionEntry`, so we can prepare for that, and
-            // afterwards we can parse and handle each function
-            // individually.
             CodeSectionStart { count, range, size } =>
                 analysis.add_section("CodeSectionStart", Some(count), &range)?,
-            CodeSectionEntry(function_body) => {
-                analysis.add_function(&function_body, function_index)?;
-                function_index += 1;
-            },
+            CodeSectionEntry(function_body) => analysis.add_function(&function_body,
+                                                                     &mut function_index)?,
             ComponentSection { parser, range } =>
                 analysis.add_section("ComponentSection", None, &range)?,
             ComponentInstanceSection(section) =>
