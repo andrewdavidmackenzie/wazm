@@ -226,18 +226,12 @@ impl Analysis {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Default)]
 struct RangeVec(Vec<RangeVecEntry>);
 #[derive(PartialEq, Debug)]
 enum RangeVecEntry {
     RangeEntry(RangeInclusive<usize>),
     SingleEntry(usize)
-}
-
-impl Default for RangeVec {
-    fn default() -> Self {
-        RangeVec(Vec::new())
-    }
 }
 
 impl fmt::Display for RangeVec {
@@ -265,7 +259,7 @@ impl From<&Vec<usize>> for RangeVec {
         let mut output: RangeVec = RangeVec::default();
         let mut start = input[0];
         let mut end = input[0];
-        for i in input[1..].into_iter() {
+        for i in input[1..].iter() {
             if *i != end + 1 {
                 if start == end {
                     output.0.push(RangeVecEntry::SingleEntry(end));
