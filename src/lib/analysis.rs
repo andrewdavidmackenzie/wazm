@@ -12,6 +12,7 @@ use wasmparser::Operator;
 use core::ops::Range;
 use std::fmt;
 use std::collections::BTreeMap;
+use std::ops::RangeInclusive;
 use leb128;
 
 use crate::Module;
@@ -225,6 +226,61 @@ impl Analysis {
     }
 }
 
+struct RangeVec(Vec<RangeVecEntry>);
+enum RangeVecEntry {
+    RangeEntry(RangeInclusive<usize>),
+    SingleEntry(usize)
+}
+
+impl Default for RangeVec {
+    fn default() -> Self {
+        RangeVec(Vec::new())
+    }
+}
+
+impl fmt::Display for RangeVec {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[")?;
+        for entry in &self.0[0..self.0.len() -1] {
+            match entry {
+                RangeVecEntry::RangeEntry(range) =>write!(f, "{}..{}, ",
+                                                          range.start(), range.end())?,
+                RangeVecEntry::SingleEntry(number) => write!(f, "{}, ", number)?,
+            }
+        }
+        match &self.0[self.0.len()-1] {
+            RangeVecEntry::RangeEntry(range) =>write!(f, "{}..{}",
+                                                      range.start(), range.end())?,
+            RangeVecEntry::SingleEntry(number) => write!(f, "{}", number)?,
+        }
+        write!(f, "]")
+    }
+}
+
+// assumes the input vector is already ordered
+impl From<&Vec<usize>> for RangeVec {
+    fn from(input: &Vec<usize>) -> Self {
+        let mut output: RangeVec = RangeVec::default();
+        let mut start = input[0];
+        let mut end = input[0];
+        for i in input[1..].into_iter() {
+            if *i != end + 1 {
+                if start == end {
+                    output.0.push(RangeVecEntry::SingleEntry(end));
+                } else {
+                    output.0.push(RangeVecEntry::RangeEntry(start..=end));
+                }
+                start = *i;
+                end = *i;
+            } else {
+                end = *i;
+            }
+        }
+
+        output
+    }
+}
+
 impl fmt::Display for Analysis {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.include_sections {
@@ -257,15 +313,15 @@ impl fmt::Display for Analysis {
             called_functions.sort();
             called_functions.dedup();
             if !called_functions.is_empty() {
-                writeln!(f, "\nStatically Called Functions ({}): {:?}",
-                         called_functions.len(), called_functions)?;
+                writeln!(f, "\nStatically Called Functions ({}): {}",
+                         called_functions.len(), RangeVec::from(&called_functions))?;
             }
 
             if !self.dynamic_dispatch_functions.is_empty() {
                 let mut dynamic = self.dynamic_dispatch_functions.clone();
                 dynamic.sort();
-                writeln!(f, "\nDynamic Dispatch Functions ({}): {:?}",
-                         dynamic.len(), dynamic)?;
+                writeln!(f, "\nDynamic Dispatch Functions ({}): {}",
+                         dynamic.len(), RangeVec::from(&dynamic))?;
             }
 
             let mut all_functions: Vec<usize> = (0..self.implemented_function_count)
@@ -288,8 +344,8 @@ impl fmt::Display for Analysis {
             });
             if !all_functions.is_empty() {
                 all_functions.sort();
-                writeln!(f, "\nUncalled Functions ({}):", all_functions.len())?;
-                writeln!(f, "{:?}", all_functions)?;
+                writeln!(f, "\nUncalled Functions ({}): {}", all_functions.len(),
+                         RangeVec::from(&all_functions))?;
             }
 
             if self.include_function_call_tree {
@@ -401,6 +457,11 @@ mod test {
     use std::fs;
     use std::process::Command;
     use std::path::PathBuf;
+
+    fn test_to_ranges() {
+        let ranges = super::to_ranges(&vec!(1, 2, 4, 5, 7, 9, 10));
+        assert_eq!(ranges, vec!(1..2, 4..5, 7..7, 9..10));
+    }
 
     fn test_file(test_file_name: &str) -> PathBuf {
         let source = PathBuf::from(&format!("{}/tests/test_files/{}",
