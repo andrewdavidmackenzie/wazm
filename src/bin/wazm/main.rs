@@ -7,6 +7,7 @@ use core::str::FromStr;
 
 mod errors;
 
+use wazm::Module;
 use crate::errors::Result;
 use crate::errors::bail;
 
@@ -50,13 +51,20 @@ fn run(matches: ArgMatches) -> Result<()> {
     }
 
     if matches.get_flag("analyze") {
-        let analysis = wazm::analyze(source,
+        let buf: Vec<u8> = std::fs::read(source)?;
+        let module = Module::parse(source, &buf)?;
+        let analysis = wazm::analyze(&module,
                                      matches.get_flag("analyze-sections"),
                                      matches.get_flag("analyze-functions"),
                                      matches.get_flag("analyze-operators"),
                                      matches.get_flag("analyze-call-tree"),
         )?;
         println!("{}", analysis);
+
+        let unaccounted_for = module.file_size - analysis.sections_size_total as u64;
+        if unaccounted_for != 0 {
+            println!("Bytes unaccounted for: {}", unaccounted_for);
+        }
     } else if source.extension() == Some("wasm".as_ref()) {
         let destination_filename = format!("{source_filename}.wz");
         let destination = Path::new(&destination_filename);

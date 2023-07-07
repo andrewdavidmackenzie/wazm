@@ -1,7 +1,6 @@
-use std::path::Path;
 use crate::errors::*;
 use std::collections::HashMap;
-use wasmparser::{Parser, FunctionBody, Payload::*};
+use wasmparser::{FunctionBody, Payload::*};
 use wasmparser::ExportSectionReader;
 use wasmparser::ImportSectionReader;
 use wasmparser::ExternalKind;
@@ -14,6 +13,8 @@ use core::ops::Range;
 use std::fmt;
 use std::collections::BTreeMap;
 use leb128;
+
+use crate::Module;
 
 pub struct Section {
     section_type: String,
@@ -51,13 +52,9 @@ impl fmt::Display for Section {
     }
 }
 
-/// Analysis results of a wasm file
+/// Analysis results of a wasm module
 #[derive(Default)]
 pub struct Analysis {
-    pub source: String,
-    pub version: u16,
-    pub file_size: u64,
-
     pub include_functions: bool,
     pub implemented_function_count: u64,
     pub imported_functions: BTreeMap<usize, String>,
@@ -77,8 +74,42 @@ pub struct Analysis {
 }
 
 impl Analysis {
-    fn add_elements(&mut self, elements_reader: ElementSectionReader)
-                 -> Result<()> {
+    fn track_size(&mut self, section_type: &str, range: &Range<usize>) -> Result<usize> {
+        let size = range.end - range.start;
+        self.sections_size_total += size;
+
+        let section_header_size = if section_type.starts_with("Magic") {
+            0
+        } else {
+            let mut buf = [0; 4]; // LEB128 encoding of u32 should not exceed 4 bytes
+            let mut writable = &mut buf[..];
+            leb128::write::unsigned(&mut writable, size as u64)
+                .expect("Could not encode in LEB128") + 1  // one byte for section type
+        };
+
+        self.sections_size_total += section_header_size;
+
+        Ok(section_header_size)
+    }
+
+    fn add_section(&mut self, section_type: &str, item_count: Option<u32>, range: &Range<usize>)
+                   -> Result<()> {
+        if self.include_sections {
+            let header_size = self.track_size(section_type, range)?;
+            let section = Section {
+                header_location: range.start - header_size,
+                section_type: section_type.to_owned(),
+                item_count,
+                range: range.clone(),
+                size: range.end - range.start,
+            };
+            self.sections.push(section);
+        }
+
+        Ok(())
+    }
+
+    fn add_elements(&mut self, elements_reader: &ElementSectionReader) -> Result<()> {
         self.add_section("ElementSection", Some(elements_reader.count()), &elements_reader.range())?;
 
         for element in elements_reader.clone().into_iter().flatten() {
@@ -91,37 +122,6 @@ impl Analysis {
                     self.dynamic_dispatch_functions.dedup();
                 }
             }
-        }
-
-        Ok(())
-    }
-
-    fn add_section(&mut self, section_type: &str, item_count: Option<u32>, range: &Range<usize>)
-    -> Result<()> {
-        if self.include_sections {
-            let size = range.end - range.start;
-            self.sections_size_total += size;
-
-            let section_header_size = if section_type.starts_with("Magic") {
-                0
-            } else {
-                let mut buf = [0; 4]; // LEB128 encoding of u32 should not exceed 4 bytes
-                let mut writable = &mut buf[..];
-                leb128::write::unsigned(&mut writable, size as u64)
-                    .expect("Could not encode in LEB128") + 1  // one byte for section type
-            };
-
-            self.sections_size_total += section_header_size;
-
-            self.sections.push(
-                Section {
-                    header_location: range.start - section_header_size,
-                    section_type: section_type.to_owned(),
-                    item_count,
-                    range: range.clone(),
-                    size,
-                }
-            );
         }
 
         Ok(())
@@ -227,10 +227,6 @@ impl Analysis {
 
 impl fmt::Display for Analysis {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "WASM File: {}", self.source)?;
-        writeln!(f, "WASM Version: {}", self.version)?;
-        writeln!(f, "File Size: {}", self.file_size)?;
-
         if self.include_sections {
             writeln!(f, "\nSections:")?;
             Section::header(f)?;
@@ -239,10 +235,6 @@ impl fmt::Display for Analysis {
             }
 
             writeln!(f, "Total Size: {}", self.sections_size_total)?;
-            let unaccounted_for = self.file_size - self.sections_size_total as u64;
-            if unaccounted_for != 0 {
-                writeln!(f, "Bytes unaccounted for: {}", unaccounted_for)?;
-            }
         }
 
         if self.include_functions {
@@ -324,16 +316,15 @@ impl fmt::Display for Analysis {
     }
 }
 
-/// Analyze the file at `source` to see what sections it has and operators it uses
-pub fn analyze(source: &Path,
+/// Analyze the parsed [Module] to see what sections it has and operators it uses
+pub fn analyze(module: &Module,
                include_sections: bool,
                include_functions: bool,
                include_operators: bool,
                include_function_call_tree: bool,
 ) -> Result<Analysis> {
     let mut analysis = Analysis {
-        source: source.canonicalize()?.display().to_string(),
-        file_size: source.metadata()?.len(),
+        sections_size_total: 8, // the magic number and version number
         include_sections,
         include_functions,
         include_operators,
@@ -341,17 +332,15 @@ pub fn analyze(source: &Path,
         ..Default::default() };
 
     let mut function_index = 0;
-
-    let buf: Vec<u8> = std::fs::read(source)?;
-    for payload in Parser::new(0).parse_all(&buf) {
+    for payload in &module.sections {
         #[allow(unused_variables)]
-        match payload? {
+        match payload {
             CodeSectionStart { count, range, size } =>
-                analysis.add_section("CodeSectionStart", Some(count), &range)?,
-            CodeSectionEntry(function_body) => analysis.add_function(&function_body,
+                analysis.add_section("CodeSectionStart", Some(*count), range)?,
+            CodeSectionEntry(function_body) => analysis.add_function(function_body,
                                                                      &mut function_index)?,
             ComponentSection { parser, range } =>
-                analysis.add_section("ComponentSection", None, &range)?,
+                analysis.add_section("ComponentSection", None, range)?,
             ComponentInstanceSection(section) =>
                 analysis.add_section("ComponentInstanceSection", None, &section.range())?,
             ComponentAliasSection(section) =>
@@ -361,7 +350,7 @@ pub fn analyze(source: &Path,
             ComponentCanonicalSection(section) =>
                 analysis.add_section("ComponentCanonicalSection", None, &section.range())?,
             ComponentStartSection { start, range } =>
-                analysis.add_section("ComponentStartSection", None, &range)?,
+                analysis.add_section("ComponentStartSection", None, range)?,
             ComponentImportSection(section) =>
                 analysis.add_section("ComponentImportSection", None, &section.range())?,
             ComponentExportSection(section) =>
@@ -371,24 +360,24 @@ pub fn analyze(source: &Path,
             CustomSection(section) =>
                 analysis.add_section("CustomSection", None, &section.range())?,
             DataCountSection { count, range } =>
-                analysis.add_section("DataCountSection", Some(count), &range)?,
+                analysis.add_section("DataCountSection", Some(*count), range)?,
             DataSection(section) =>
                 analysis.add_section("DataSection", Some(section.count()), &section.range())?,
-            ElementSection(section) => analysis.add_elements(section)?,
-            ExportSection(section) => analysis.add_exports(&section)?,
+            ElementSection(reader) => analysis.add_elements(reader)?,
+            ExportSection(reader) => analysis.add_exports(reader)?,
             FunctionSection(section) =>
                 analysis.add_section("FunctionSection", Some(section.count()), &section.range())?,
             GlobalSection(section) =>
                 analysis.add_section("GlobalSection", Some(section.count()), &section.range())?,
-            ImportSection(section) => analysis.add_imports(&section, &mut function_index)?,
+            ImportSection(reader) => analysis.add_imports(reader, &mut function_index)?,
             InstanceSection(section) =>
                 analysis.add_section("InstanceSection", Some(section.count()), &section.range())?,
             MemorySection(section) =>
                 analysis.add_section("MemorySection", Some(section.count()), &section.range())?,
             ModuleSection { parser, range } =>
-                analysis.add_section("ModuleSection", None, &range)?,
+                analysis.add_section("ModuleSection", None, range)?,
             StartSection { func, range } =>
-                analysis.add_section("StartSection", None, &range)?,
+                analysis.add_section("StartSection", None, range)?,
             TableSection(section) =>
                 analysis.add_section("TableSection", Some(section.count()), &section.range())?,
             TagSection(section) =>
@@ -396,12 +385,9 @@ pub fn analyze(source: &Path,
             TypeSection(section) =>
                 analysis.add_section("TypeSection", Some(section.count()), &section.range())?,
             UnknownSection { id, contents, range } =>
-                analysis.add_section("UnknownSection", None, &range)?,
-            Version { num, encoding, range } => {
-                analysis.version = num;
-                analysis.add_section("Magic & Version", None, &range)?;
-            }
-            End(_) => {}
+                analysis.add_section("UnknownSection", None, range)?,
+            End(_) => bail!("End section should have been parsed out prior to analysis"),
+            _ => bail!("Unexpected Payload found during analysis"),
         }
     }
 
@@ -434,9 +420,11 @@ mod test {
     #[test]
     fn test_analyze_hello_web() {
         let wasm = test_file("hello_web.wat");
-        let analysis = super::analyze(&wasm, true, true, true, true)
+        let buf: Vec<u8> = std::fs::read(&wasm).expect("Could not read wasm file");
+        let module = super::Module::parse(&wasm, &buf).expect("Could not parse test wasm");
+        assert_eq!(module.version, 1);
+        let analysis = super::analyze(&module, true, true, true, true)
             .expect("Analysis of wasm file failed");
-        assert_eq!(analysis.version, 1);
         assert_eq!(analysis.exported_functions.len(), 1);
         assert_eq!(analysis.implemented_function_count, 2);
         let _ = fs::remove_file(&wasm);
