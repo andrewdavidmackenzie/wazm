@@ -51,8 +51,8 @@ impl<'a> Module<'a> {
 
 impl<'a> fmt::Display for Module<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "WASM File: {}", self.source)?;
-        writeln!(f, "WASM Version: {}", self.version)?;
+        writeln!(f, "source: {}", self.source)?;
+        writeln!(f, "version: {}", self.version)?;
         writeln!(f, "File Size: {}", self.file_size)
     }
 }

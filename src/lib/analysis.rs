@@ -226,7 +226,9 @@ impl Analysis {
     }
 }
 
+#[derive(PartialEq, Debug)]
 struct RangeVec(Vec<RangeVecEntry>);
+#[derive(PartialEq, Debug)]
 enum RangeVecEntry {
     RangeEntry(RangeInclusive<usize>),
     SingleEntry(usize)
@@ -277,6 +279,12 @@ impl From<&Vec<usize>> for RangeVec {
             }
         }
 
+        if start == end {
+            output.0.push(RangeVecEntry::SingleEntry(end));
+        } else {
+            output.0.push(RangeVecEntry::RangeEntry(start..=end));
+        }
+
         output
     }
 }
@@ -284,7 +292,7 @@ impl From<&Vec<usize>> for RangeVec {
 impl fmt::Display for Analysis {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.include_sections {
-            writeln!(f, "\nSections:")?;
+            writeln!(f, "Sections:")?;
             Section::header(f)?;
             for section in &self.sections {
                 writeln!(f, "{}", section)?;
@@ -457,10 +465,25 @@ mod test {
     use std::fs;
     use std::process::Command;
     use std::path::PathBuf;
+    use crate::analysis::RangeVec;
+    use crate::analysis::RangeVecEntry::{RangeEntry, SingleEntry};
 
+    #[test]
     fn test_to_ranges() {
-        let ranges = super::to_ranges(&vec!(1, 2, 4, 5, 7, 9, 10));
-        assert_eq!(ranges, vec!(1..2, 4..5, 7..7, 9..10));
+        let ranges = RangeVec::from(&vec!(1, 2, 4, 5, 7, 9, 10));
+        assert_eq!(ranges, RangeVec(vec!(RangeEntry(1..=2),
+                                         RangeEntry(4..=5),
+                                         SingleEntry(7),
+                                         RangeEntry(9..=10))));
+    }
+
+    #[test]
+    fn test_to_ranges_end_single() {
+        let ranges = RangeVec::from(&vec!(1, 2, 4, 5, 7, 9));
+        assert_eq!(ranges, RangeVec(vec!(RangeEntry(1..=2),
+                                         RangeEntry(4..=5),
+                                         SingleEntry(7),
+                                         SingleEntry(9))));
     }
 
     fn test_file(test_file_name: &str) -> PathBuf {
@@ -481,7 +504,7 @@ mod test {
     #[test]
     fn test_analyze_hello_web() {
         let wasm = test_file("hello_web.wat");
-        let buf: Vec<u8> = std::fs::read(&wasm).expect("Could not read wasm file");
+        let buf: Vec<u8> = fs::read(&wasm).expect("Could not read wasm file");
         let module = super::Module::parse(&wasm, &buf).expect("Could not parse test wasm");
         assert_eq!(module.version, 1);
         let analysis = super::analyze(&module, true, true, true, true)

@@ -59,6 +59,7 @@ fn run(matches: ArgMatches) -> Result<()> {
                                      matches.get_flag("analyze-operators"),
                                      matches.get_flag("analyze-call-tree"),
         )?;
+        println!("{}", module);
         println!("{}", analysis);
 
         let unaccounted_for = module.file_size - analysis.sections_size_total as u64;
