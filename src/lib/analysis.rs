@@ -382,7 +382,6 @@ pub fn analyze(module: &Module,
                include_function_call_tree: bool,
 ) -> Result<Analysis> {
     let mut analysis = Analysis {
-        sections_size_total: 8, // the magic number and version number
         include_sections,
         include_functions,
         include_operators,
@@ -444,8 +443,9 @@ pub fn analyze(module: &Module,
                 analysis.add_section("TypeSection", Some(section.count()), &section.range())?,
             UnknownSection { id, contents, range } =>
                 analysis.add_section("UnknownSection", None, range)?,
+            Version { num, encoding, range } =>
+                analysis.sections_size_total += 8,
             End(_) => bail!("End section should have been parsed out prior to analysis"),
-            _ => bail!("Unexpected Payload found during analysis"),
         }
     }
 

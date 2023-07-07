@@ -13,6 +13,11 @@ pub struct Module<'a> {
 
 impl<'a> Module<'a> {
     fn add_section(&mut self, section: Payload<'a>) -> Result<()> {
+        #[allow(unused_variables)]
+        match &section {
+            Version { num, encoding, range } => self.version = *num,
+            _ => {}
+        }
         self.sections.push(section);
         Ok(())
     }
@@ -36,9 +41,7 @@ impl<'a> Module<'a> {
         };
 
         for payload in Parser::new(0).parse_all(buf) {
-            #[allow(unused_variables)]
             match payload {
-                Ok(Version { num, encoding, range }) => module.version = num,
                 Ok(End(_)) => continue,
                 Ok(section) => module.add_section(section)?,
                 _ => bail!("Unexpected payload while parsing WASM Module"),
