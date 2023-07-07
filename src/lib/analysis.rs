@@ -79,7 +79,7 @@ impl Analysis {
         let size = range.end - range.start;
         self.sections_size_total += size;
 
-        let section_header_size = if section_type.starts_with("Magic") {
+        let section_header_size = if section_type.starts_with("Version") {
             0
         } else {
             let mut buf = [0; 4]; // LEB128 encoding of u32 should not exceed 4 bytes
@@ -444,7 +444,7 @@ pub fn analyze(module: &Module,
             UnknownSection { id, contents, range } =>
                 analysis.add_section("UnknownSection", None, range)?,
             Version { num, encoding, range } =>
-                analysis.sections_size_total += 8,
+                analysis.add_section("Version", None, range)?,
             End(_) => bail!("End section should have been parsed out prior to analysis"),
         }
     }
