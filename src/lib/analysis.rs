@@ -389,7 +389,7 @@ pub fn analyze(module: &Module,
         ..Default::default() };
 
     let mut function_index = 0;
-    for payload in &module.sections {
+    for payload in &module.payloads {
         #[allow(unused_variables)]
         match payload {
             CodeSectionStart { count, range, size } =>

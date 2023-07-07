@@ -8,17 +8,17 @@ pub struct Module<'a> {
     pub source: String,
     pub version: u16,
     pub file_size: u64,
-    pub sections: Vec<Payload<'a>>,
+    pub payloads: Vec<Payload<'a>>,
 }
 
 impl<'a> Module<'a> {
-    fn add_section(&mut self, section: Payload<'a>) -> Result<()> {
+    fn add_payload(&mut self, payload: Payload<'a>) -> Result<()> {
         #[allow(unused_variables)]
-        match &section {
+        match &payload {
             Version { num, encoding, range } => self.version = *num,
             _ => {}
         }
-        self.sections.push(section);
+        self.payloads.push(payload);
         Ok(())
     }
 
@@ -37,13 +37,13 @@ impl<'a> Module<'a> {
             source: source.canonicalize()?.display().to_string(),
             version: 0,
             file_size: source.metadata()?.len(),
-            sections: vec![],
+            payloads: vec![],
         };
 
         for payload in Parser::new(0).parse_all(buf) {
             match payload {
                 Ok(End(_)) => continue,
-                Ok(section) => module.add_section(section)?,
+                Ok(section) => module.add_payload(section)?,
                 _ => bail!("Unexpected payload while parsing WASM Module"),
             }
         }
@@ -56,6 +56,6 @@ impl<'a> fmt::Display for Module<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "source: {}", self.source)?;
         writeln!(f, "version: {}", self.version)?;
-        writeln!(f, "File Size: {}", self.file_size)
+        writeln!(f, "size: {}", self.file_size)
     }
 }
