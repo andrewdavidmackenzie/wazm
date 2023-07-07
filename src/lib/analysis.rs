@@ -301,8 +301,8 @@ impl fmt::Display for Analysis {
             for (function_index, import_name) in &self.imported_functions {
                 writeln!(f, " {:#5} '{}'", function_index, import_name)?;
             }
-            writeln!(f, "Implemented Functions ({}):", self.implemented_function_count)?;
-            writeln!(f, "Exported Functions ({}):", self.exported_functions.len())?;
+            writeln!(f, "Implemented ({}):", self.implemented_function_count)?;
+            writeln!(f, "Exported ({}):", self.exported_functions.len())?;
 
             for (function_index, export_name) in &self.exported_functions {
                 writeln!(f, " {:#5} '{}'", function_index, export_name)?;
@@ -315,14 +315,14 @@ impl fmt::Display for Analysis {
             called_functions.sort();
             called_functions.dedup();
             if !called_functions.is_empty() {
-                writeln!(f, "\nStatically Called Functions ({}): {}",
+                writeln!(f, "\nStatically Called ({}): {}",
                          called_functions.len(), RangeVec::from(&called_functions))?;
             }
 
             if !self.dynamic_dispatch_functions.is_empty() {
                 let mut dynamic = self.dynamic_dispatch_functions.clone();
                 dynamic.sort();
-                writeln!(f, "\nDynamic Dispatch Functions ({}): {}",
+                writeln!(f, "\nDynamic Dispatch ({}): {}",
                          dynamic.len(), RangeVec::from(&dynamic))?;
             }
 
@@ -346,12 +346,12 @@ impl fmt::Display for Analysis {
             });
             if !all_functions.is_empty() {
                 all_functions.sort();
-                writeln!(f, "\nUncalled Functions ({}): {}", all_functions.len(),
+                writeln!(f, "\nUncalled ({}): {}", all_functions.len(),
                          RangeVec::from(&all_functions))?;
             }
 
             if self.include_function_call_tree {
-                writeln!(f, "\nFunction Call Tree:")?;
+                writeln!(f, "\nCall Tree:")?;
                 for index in self.static_function_calls.keys() {
                     if let Some(name) = self.exported_functions.get(index) {
                         self.print_call_tree(index, name, f)?;
