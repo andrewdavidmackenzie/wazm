@@ -2,6 +2,7 @@ use std::path::Path;
 use crate::errors::*;
 use wasmparser::{Parser, Payload::*, Payload};
 use std::fmt;
+use log::debug;
 
 /// wasm Module
 pub struct Module<'a> {
@@ -16,7 +17,7 @@ impl<'a> Module<'a> {
         #[allow(unused_variables)]
         match &payload {
             Version { num, encoding, range } => self.version = *num,
-            _ => {}
+            _ => debug!("Adding non-Version payload"),
         }
         self.payloads.push(payload);
         Ok(())
